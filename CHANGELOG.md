@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 ### 新增
+- P0-4 比对脚本 `spikes/raw-input/tools/compare_runs.py`：按轮号对齐 Godot 与 Raw Input 基准，生成报告数据与初步判定（8 条测试）
+
+### 新增
 - 原创练习地图设计文档 `docs/map/00-design.md`（M0）：中心大厅 + 6 个训练分区、尺度规范、数据驱动灰盒约定、原创性自查清单
 
 ### 变更
