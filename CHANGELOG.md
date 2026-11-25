@@ -3,6 +3,9 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+### 变更
+- 路线图新增「地图线」：原创练习地图 M0–M3；立项书范围加入原创练习地图，红线明确不复刻现有地图的布局或外观；v0.1 加入基础移动与碰撞，v0.2 加入最小靶场
+
 ### 新增
 - P0-4 原始鼠标输入验证工程 `spikes/raw-input/`：按轮计数、360° 标柱场景、CSV 记录、实测步骤
 - 独立基准 `tools/rawinput_counter.py`：直接读取 Windows Raw Input，与 Godot 按同一次点击分轮对比；边界位移、读取失败、绝对坐标都会把该轮标为作废（8 条测试）
