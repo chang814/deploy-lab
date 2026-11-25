@@ -1,6 +1,11 @@
 extends RefCounted
 ## 视角换算的纯函数，公式见 docs/04-sensitivity-spec.md。
-## 单位：角度一律为度（_deg），计数为原始鼠标 count。GDScript 的 float 为 64 位。
+## 单位：角度一律为度（_deg），计数为原始鼠标 count。
+## 注意：GDScript 的标量 float 是 64 位，但 Vector2/Vector3 是 32 位，
+## 所以需要 float64 精度的累计量一律用标量 float 或 PackedFloat64Array。
+##
+## spike 例外：下面两个增益常量是 CS2 的已知默认值（待测量确认），
+## 正式工程中会移到 data/ 配置文件（PROJECT_RULES「手感常量不写死」）。
 
 const M_YAW_DEFAULT_DEG: float = 0.022
 const M_PITCH_DEFAULT_DEG: float = 0.022
@@ -17,7 +22,23 @@ static func apply_pitch(pitch_deg: float, delta_pitch_deg: float, min_deg: float
 	return clampf(pitch_deg + delta_pitch_deg, min_deg, max_deg)
 
 
-## 转一圈需要的 count 数；增益为 0 时返回 INF（无有限值）。
+## 输入适配层：处理一个鼠标事件，返回 [新 yaw_deg, 新 pitch_deg]。
+## 鼠标 X 向右为正 → yaw 向右为正；鼠标 Y 向下为正 → pitch 向上为正（取负）。
+## X 只使用 m_yaw，Y 只使用 m_pitch。
+static func look_step(
+	yaw_deg: float, pitch_deg: float,
+	counts_x: float, counts_y: float,
+	sensitivity: float, m_yaw_deg: float, m_pitch_deg: float,
+	pitch_min_deg: float, pitch_max_deg: float
+) -> PackedFloat64Array:
+	var new_yaw_deg: float = yaw_deg + delta_deg(counts_x, sensitivity, m_yaw_deg)
+	var new_pitch_deg: float = apply_pitch(
+		pitch_deg, -delta_deg(counts_y, sensitivity, m_pitch_deg), pitch_min_deg, pitch_max_deg
+	)
+	return PackedFloat64Array([new_yaw_deg, new_pitch_deg])
+
+
+## 转一圈需要的 count 数；增益为 0 时返回 INF（无有限值）。负增益只改变方向，距离取正值。
 static func counts_per_360(sensitivity: float, m_yaw_deg: float) -> float:
 	var gain: float = absf(sensitivity * m_yaw_deg)
 	if gain == 0.0:

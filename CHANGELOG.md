@@ -4,8 +4,9 @@
 
 ## [Unreleased]
 ### 新增
-- P0-4 原始鼠标输入验证工程 `spikes/raw-input/`：计数统计、360° 标柱场景、CSV 记录、实测步骤
-- 视角换算模块 `look_math.gd` 与 33 条单元测试（来自灵敏度规格第 5 节）
+- P0-4 原始鼠标输入验证工程 `spikes/raw-input/`：按轮计数、360° 标柱场景、CSV 记录、实测步骤
+- 独立基准 `tools/rawinput_counter.py`：直接读取 Windows Raw Input，与 Godot 按同一次点击分轮对比
+- 视角换算模块 `look_math.gd`（含输入适配层 `look_step`）与 56 条单元测试（来自灵敏度规格第 5 节）
 
 ### 变更
 - 审定灵敏度与 FOV 规格（Issue #2，GPT，待 Claude 审查）：修正 16:10 FOV 舍入，补充复算结果、开镜/pitch 待测量方案及单元测试用例表

@@ -1,10 +1,15 @@
 extends Node3D
 ## P0-4 原始鼠标输入验证。
-## 1) 统计鼠标原始位移（relative 与 screen_relative 两路），用来检验是否等于物理计数；
-## 2) 按规格公式驱动第一人称视角，并在四周每 10° 放一根标柱，用来和 CS2 做 360° 对照。
+## 1) 按「轮」统计 Godot 收到的鼠标位移（relative 与 screen_relative 两路），
+##    与独立的 Windows Raw Input 计数器（tools/rawinput_counter.py）逐轮对比；
+## 2) 按规格公式驱动第一人称视角，四周每 10° 一根标柱，用来和 CS2 做 360° 对照。
+##
+## 一轮的边界由鼠标按键决定，计数器工具会收到同一次点击，因此两边区间一致：
+##   鼠标中键 = 开始新一轮（两边清零）；鼠标右键 = 结束本轮并记录（两边各写一行 CSV）。
 
 const LookMath = preload("res://look_math.gd")
 
+# spike 例外：暂定常量写在这里，正式工程移到 data/（见规格 4.2，均待测量）
 const PITCH_MIN_DEG: float = -89.0
 const PITCH_MAX_DEG: float = 89.0
 const BASE_HFOV_4X3_DEG: float = 90.0
@@ -15,13 +20,17 @@ const LOG_PATH: String = "user://spike_runs.csv"
 var dpi: float = 800.0
 var sensitivity: float = 1.0
 
-# 计数（float64 累积，不取整）
-var sum_rel: Vector2 = Vector2.ZERO
-var sum_screen: Vector2 = Vector2.ZERO
-var event_count: int = 0
-var fractional_event_count: int = 0
-var mismatch_event_count: int = 0
-var max_abs_dx: float = 0.0
+# 本轮计数：一律用标量 float（64 位）。Vector2 是 32 位，不能用来累计。
+var round_screen_x: float = 0.0
+var round_screen_y: float = 0.0
+var round_rel_x: float = 0.0
+var round_rel_y: float = 0.0
+var round_events: int = 0
+var round_fractional_events: int = 0
+var round_mismatch_events: int = 0
+var round_max_abs_dx: float = 0.0
+var round_index: int = 0
+var round_yaw_start_deg: float = 0.0
 
 # 视角：yaw 不回绕，向右转为正；pitch 向上为正
 var yaw_deg: float = 0.0
@@ -30,6 +39,8 @@ var pitch_deg: float = 0.0
 var _camera: Camera3D
 var _info: Label
 var _settings: HBoxContainer
+var _note: LineEdit
+var _last_log_line: String = "（尚未记录）"
 
 
 func _ready() -> void:
@@ -42,27 +53,39 @@ func _ready() -> void:
 func _input(event: InputEvent) -> void:
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
+	var button: InputEventMouseButton = event as InputEventMouseButton
+	if button != null and button.pressed:
+		if button.button_index == MOUSE_BUTTON_MIDDLE:
+			_start_round()
+		elif button.button_index == MOUSE_BUTTON_RIGHT:
+			_log_round()
+		return
 	var motion: InputEventMouseMotion = event as InputEventMouseMotion
 	if motion == null:
 		return
-	var rel: Vector2 = motion.relative
-	var scr: Vector2 = motion.screen_relative
-	sum_rel += rel
-	sum_screen += scr
-	event_count += 1
-	if not _is_integer(scr.x) or not _is_integer(scr.y):
-		fractional_event_count += 1
-	if rel != scr:
-		mismatch_event_count += 1
-	max_abs_dx = maxf(max_abs_dx, absf(scr.x))
+	var rel_x: float = motion.relative.x
+	var rel_y: float = motion.relative.y
+	var scr_x: float = motion.screen_relative.x
+	var scr_y: float = motion.screen_relative.y
+	round_screen_x += scr_x
+	round_screen_y += scr_y
+	round_rel_x += rel_x
+	round_rel_y += rel_y
+	round_events += 1
+	# 诊断项，不是通过/失败判据：小数说明数据经过缩放；两路不一致说明存在视口缩放
+	if scr_x != floorf(scr_x) or scr_y != floorf(scr_y):
+		round_fractional_events += 1
+	if rel_x != scr_x or rel_y != scr_y:
+		round_mismatch_events += 1
+	round_max_abs_dx = maxf(round_max_abs_dx, absf(scr_x))
 
-	yaw_deg += LookMath.delta_deg(scr.x, sensitivity, LookMath.M_YAW_DEFAULT_DEG)
-	pitch_deg = LookMath.apply_pitch(
-		pitch_deg,
-		-LookMath.delta_deg(scr.y, sensitivity, LookMath.M_PITCH_DEFAULT_DEG),
-		PITCH_MIN_DEG,
-		PITCH_MAX_DEG
+	var next: PackedFloat64Array = LookMath.look_step(
+		yaw_deg, pitch_deg, scr_x, scr_y, sensitivity,
+		LookMath.M_YAW_DEFAULT_DEG, LookMath.M_PITCH_DEFAULT_DEG,
+		PITCH_MIN_DEG, PITCH_MAX_DEG
 	)
+	yaw_deg = next[0]
+	pitch_deg = next[1]
 	_apply_camera()
 
 
@@ -75,15 +98,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_captured(true)
 		KEY_ESCAPE:
 			_set_captured(false)
-		KEY_R:
-			_reset_counters()
 		KEY_Z:
-			_reset_counters()
 			yaw_deg = 0.0
 			pitch_deg = 0.0
 			_apply_camera()
-		KEY_L:
-			_log_run()
+			_start_round()
 		KEY_F:
 			var mode: DisplayServer.WindowMode = DisplayServer.window_get_mode()
 			if mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
@@ -92,35 +111,36 @@ func _unhandled_input(event: InputEvent) -> void:
 				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
 
 
-func _process(_delta: float) -> void:
-	var size: Vector2i = get_viewport().get_visible_rect().size
-	var aspect: float = float(size.x) / float(size.y)
-	var vfov: float = _camera.fov
+func _process(_delta_s: float) -> void:
+	var size_px: Vector2i = get_viewport().get_visible_rect().size
+	var aspect: float = float(size_px.x) / float(size_px.y)
+	var vfov_deg: float = _camera.fov
 	var captured: bool = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	var lines: PackedStringArray = [
 		"FPS %d   垂直同步 %s   视口 %d×%d（%.4f）   hfov %.4f°   vfov %.4f°" % [
 			Engine.get_frames_per_second(),
 			"关" if DisplayServer.window_get_vsync_mode() == DisplayServer.VSYNC_DISABLED else "开",
-			size.x, size.y, aspect, LookMath.hfov_from_vfov(vfov, aspect), vfov,
+			size_px.x, size_px.y, aspect, LookMath.hfov_from_vfov(vfov_deg, aspect), vfov_deg,
 		],
-		"鼠标：%s" % ("已锁定（Esc 释放）" if captured else "未锁定（按 C 锁定开始测试）"),
+		"鼠标：%s" % ("已锁定（Esc 释放）" if captured else "未锁定（按 C 锁定）"),
 		"",
-		"事件数 %d   非整数事件 %d   relative≠screen_relative 的事件 %d   单事件最大 |dx| %.0f" % [
-			event_count, fractional_event_count, mismatch_event_count, max_abs_dx,
+		"第 %d 轮   X：%.3f counts   Y：%.3f counts   （relative 路：X %.3f  Y %.3f）" % [
+			round_index, round_screen_x, round_screen_y, round_rel_x, round_rel_y,
 		],
-		"累计 X：%.3f counts   累计 Y：%.3f counts   （relative 路：X %.3f  Y %.3f）" % [
-			sum_screen.x, sum_screen.y, sum_rel.x, sum_rel.y,
+		"按 DPI %.0f 换算水平位移 %.3f cm   本轮 yaw 变化 %.4f°" % [
+			dpi, round_screen_x / dpi * LookMath.CM_PER_INCH, yaw_deg - round_yaw_start_deg,
 		],
-		"按 DPI %.0f 换算水平位移：%.3f cm" % [dpi, sum_screen.x / dpi * LookMath.CM_PER_INCH],
+		"诊断：事件 %d   含小数 %d   两路不一致 %d   单事件最大 |dx| %.0f" % [
+			round_events, round_fractional_events, round_mismatch_events, round_max_abs_dx,
+		],
 		"",
-		"yaw（不回绕）%.4f°   = %.5f 圈   pitch %.3f°" % [yaw_deg, yaw_deg / 360.0, pitch_deg],
-		"灵敏度 %.3f   理论 %.2f counts/360°   %.3f cm/360°" % [
-			sensitivity,
-			LookMath.counts_per_360(sensitivity, LookMath.M_YAW_DEFAULT_DEG),
+		"yaw（不回绕）%.4f° = %.5f 圈   pitch %.3f°   灵敏度 %.3f → %.3f cm/360°" % [
+			yaw_deg, yaw_deg / 360.0, pitch_deg, sensitivity,
 			LookMath.cm_per_360(dpi, sensitivity, LookMath.M_YAW_DEFAULT_DEG),
 		],
 		"",
-		"C 锁定 · Esc 释放 · R 清零计数 · Z 清零计数并回正视角 · L 记录本次到 CSV · F 全屏切换",
+		"鼠标中键 开始新一轮 · 右键 结束并记录 · Z 视角回正 · F 全屏 · C 锁定 · Esc 释放",
+		"上次记录：%s" % _last_log_line,
 		"记录文件：%s" % ProjectSettings.globalize_path(LOG_PATH),
 	]
 	_info.text = "\n".join(lines)
@@ -131,41 +151,45 @@ func _set_captured(captured: bool) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if captured else Input.MOUSE_MODE_VISIBLE
 
 
-func _reset_counters() -> void:
-	sum_rel = Vector2.ZERO
-	sum_screen = Vector2.ZERO
-	event_count = 0
-	fractional_event_count = 0
-	mismatch_event_count = 0
-	max_abs_dx = 0.0
+func _start_round() -> void:
+	round_index += 1
+	round_screen_x = 0.0
+	round_screen_y = 0.0
+	round_rel_x = 0.0
+	round_rel_y = 0.0
+	round_events = 0
+	round_fractional_events = 0
+	round_mismatch_events = 0
+	round_max_abs_dx = 0.0
+	round_yaw_start_deg = yaw_deg
 
 
 func _apply_camera() -> void:
 	_camera.rotation = Vector3(deg_to_rad(pitch_deg), -deg_to_rad(yaw_deg), 0.0)
 
 
-func _is_integer(v: float) -> bool:
-	return v == floorf(v)
-
-
-func _log_run() -> void:
+func _log_round() -> void:
 	var is_new: bool = not FileAccess.file_exists(LOG_PATH)
-	var f: FileAccess = FileAccess.open(LOG_PATH, FileAccess.READ_WRITE if not is_new else FileAccess.WRITE)
+	var f: FileAccess = FileAccess.open(LOG_PATH, FileAccess.WRITE if is_new else FileAccess.READ_WRITE)
 	if f == null:
 		push_error("无法写入 %s" % LOG_PATH)
 		return
 	f.seek_end()
 	if is_new:
-		f.store_line("time,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,cm_x,yaw_deg,pitch_deg,window_mode")
-	f.store_line("%s,%.0f,%.4f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%.4f,%.4f,%.4f,%d" % [
-		Time.get_datetime_string_from_system(), dpi, sensitivity,
-		sum_screen.x, sum_screen.y, sum_rel.x, sum_rel.y,
-		event_count, fractional_event_count, mismatch_event_count,
-		sum_screen.x / dpi * LookMath.CM_PER_INCH, yaw_deg, pitch_deg,
-		DisplayServer.window_get_mode(),
-	])
+		f.store_line("time,round,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale")
+	var size_px: Vector2i = get_viewport().get_visible_rect().size
+	var note: String = _note.text.replace(",", "，")
+	var line: String = "%s,%d,%s,%.0f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.0f,%.6f,%.9f,%d,%d,%d,%.4f" % [
+		Time.get_datetime_string_from_system(), round_index, note, dpi, sensitivity,
+		round_screen_x, round_screen_y, round_rel_x, round_rel_y,
+		round_events, round_fractional_events, round_mismatch_events, round_max_abs_dx,
+		round_screen_x / dpi * LookMath.CM_PER_INCH, yaw_deg - round_yaw_start_deg,
+		DisplayServer.window_get_mode(), size_px.x, size_px.y, get_window().content_scale_factor,
+	]
+	f.store_line(line)
 	f.close()
-	print("已记录一次：", ProjectSettings.globalize_path(LOG_PATH))
+	_last_log_line = "第 %d 轮 [%s] X=%.3f Y=%.3f" % [round_index, note, round_screen_x, round_screen_y]
+	print("已记录：", line)
 
 
 func _build_world() -> void:
@@ -192,32 +216,32 @@ func _build_world() -> void:
 	# 每 10° 一根标柱：0° 红色最高，90° 倍数白色，30° 倍数浅灰带角度数字，其余深灰
 	for i: int in 36:
 		var angle_deg: float = i * 10.0
-		var a: float = deg_to_rad(angle_deg)
-		var height: float = 1.5
+		var angle_rad: float = deg_to_rad(angle_deg)
+		var height_m: float = 1.5
 		var color: Color = Color(0.35, 0.36, 0.40)
 		if i % 3 == 0:
-			height = 3.0
+			height_m = 3.0
 			color = Color(0.70, 0.72, 0.76)
 		if i % 9 == 0:
-			height = 5.0
+			height_m = 5.0
 			color = Color(0.95, 0.95, 0.95)
 		if i == 0:
-			height = 7.0
+			height_m = 7.0
 			color = Color(0.90, 0.20, 0.20)
 		var box: BoxMesh = BoxMesh.new()
-		box.size = Vector3(0.25, height, 0.25)
+		box.size = Vector3(0.25, height_m, 0.25)
 		var pillar: MeshInstance3D = MeshInstance3D.new()
 		pillar.mesh = box
 		pillar.material_override = _flat_material(color)
-		# 向右转 a 时的前方：(sin a, 0, -cos a)
-		pillar.position = Vector3(sin(a), 0.0, -cos(a)) * PILLAR_RADIUS_M + Vector3(0.0, height / 2.0, 0.0)
+		# 向右转 angle 时的前方：(sin, 0, -cos)
+		pillar.position = Vector3(sin(angle_rad), 0.0, -cos(angle_rad)) * PILLAR_RADIUS_M + Vector3(0.0, height_m / 2.0, 0.0)
 		add_child(pillar)
 		if i % 3 == 0:
 			var label: Label3D = Label3D.new()
 			label.text = "%d°" % int(angle_deg)
 			label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 			label.font_size = 96
-			label.position = pillar.position + Vector3(0.0, height / 2.0 + 0.6, 0.0)
+			label.position = pillar.position + Vector3(0.0, height_m / 2.0 + 0.6, 0.0)
 			add_child(label)
 
 	_camera = Camera3D.new()
@@ -255,7 +279,7 @@ func _build_ui() -> void:
 	dpi_box.value = dpi
 	dpi_box.value_changed.connect(func(v: float) -> void: dpi = v)
 	_settings.add_child(dpi_box)
-	_settings.add_child(_label("   灵敏度（与 CS2 相同）"))
+	_settings.add_child(_label("  灵敏度（同 CS2）"))
 	var sens_box: SpinBox = SpinBox.new()
 	sens_box.min_value = 0.01
 	sens_box.max_value = 20.0
@@ -263,6 +287,11 @@ func _build_ui() -> void:
 	sens_box.value = sensitivity
 	sens_box.value_changed.connect(func(v: float) -> void: sensitivity = v)
 	_settings.add_child(sens_box)
+	_settings.add_child(_label("  本组备注"))
+	_note = LineEdit.new()
+	_note.placeholder_text = "如 T1-慢"
+	_note.custom_minimum_size = Vector2(140.0, 0.0)
+	_settings.add_child(_note)
 
 	# 屏幕中心准星（2px 十字）
 	var center: CenterContainer = CenterContainer.new()
