@@ -16,6 +16,9 @@ recordings/
 # 从游戏文件提取的任何内容一律不入库（见 PROJECT_RULES.md 红线）
 extracted/
 
+# Agent 的 worktree（见 docs/05-shared-folder-protocol.md）
+.worktrees/
+
 # OS / IDE
 .DS_Store
 Thumbs.db

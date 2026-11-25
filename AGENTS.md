@@ -2,6 +2,8 @@
 
 先阅读并遵守 `PROJECT_RULES.md`，然后阅读 `docs/02-workflow.md`。
 
+**你和 Claude 共用同一个项目文件夹，必须遵守 `docs/05-shared-folder-protocol.md`：主文件夹不改不切分支，改动只在 `.worktrees/` 中进行。**
+
 ## 你的角色：严谨实现 / 交叉审查
 - 主要负责：灵敏度与 FOV 换算、输入管线、切枪状态机、计时逻辑，以及对应的单元测试。
 - 审查别人的 PR 时，按以下结构输出：

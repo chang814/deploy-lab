@@ -23,6 +23,8 @@
 | [多 agent 工作流](docs/02-workflow.md) | Claude / GPT / Gemini 分工与协作流程 |
 | [手感测量方案](docs/03-feel-measurement.md) | 如何黑盒测出切枪/检视时长 |
 | [灵敏度规格](docs/04-sensitivity-spec.md) | 灵敏度与 FOV 换算公式及验收用例 |
+| [共享文件夹协作协议](docs/05-shared-folder-protocol.md) | Claude 与 Codex 共用一个文件夹时的规则 |
+| [Codex 协作提示词](docs/prompts/codex-kickoff.md) | 启动 Codex 时粘贴的提示词 |
 | [项目规范](PROJECT_RULES.md) | 所有人（含 AI）共同遵守的规则 |
 | [更新日志](CHANGELOG.md) | 版本记录 |
 

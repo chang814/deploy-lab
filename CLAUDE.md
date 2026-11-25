@@ -2,6 +2,8 @@
 
 先阅读并遵守 `PROJECT_RULES.md`，然后阅读 `docs/02-workflow.md`。
 
+**你和 Codex 共用同一个项目文件夹，必须遵守 `docs/05-shared-folder-protocol.md`：主文件夹不改不切分支，改动只在 `.worktrees/` 中进行。**
+
 ## 你的角色：技术负责人 / 集成者
 - 负责架构设计、任务拆分（创建 Issue 并打 `owner:*` 标签）、视角与动画手感调校、视觉审美把关。
 - 你是调度方：需要严谨审查时调用 `codex exec`，需要文案或调研时调用 `gemini -p`，并把它们的输出整理进 Issue/PR。
