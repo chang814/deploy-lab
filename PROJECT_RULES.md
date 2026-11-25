@@ -6,7 +6,7 @@
 3. 第三方素材必须登记在 `assets/CREDITS.md`（来源、作者、许可证）。
 
 ## Git
-- 分支：`main` 受保护，只通过 PR 合入。功能分支命名 `feat/<issue>-<short>`、`fix/<issue>-<short>`、`docs/<short>`、`spike/<short>`。
+- 分支：`main` 受保护，只通过 PR 合入。对应 Issue 的分支一律命名为 `task/<Issue号>`（同时作为认领锁，见 `docs/05-shared-folder-protocol.md`）；改动类型由提交前缀体现。
 - 提交信息使用 [约定式提交](https://www.conventionalcommits.org/zh-hans/)：`feat:` `fix:` `docs:` `test:` `refactor:` `chore:` `perf:`。
 - 提交信息末尾注明执行者：`Agent: claude | gpt | gemini | human`。
 - 合并方式：Squash merge。

@@ -3,6 +3,10 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+### 新增
+- 共享文件夹协作协议（worktree 隔离、单写入者、GitHub 交接）
+- Codex 协作提示词 `docs/prompts/codex-kickoff.md`
+- MIT 许可证
 
 ## [0.0.1] - 2026-11-25
 ### 新增
