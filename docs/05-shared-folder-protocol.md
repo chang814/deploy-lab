@@ -8,12 +8,14 @@
 - 主文件夹**始终停在 `main` 分支**，用来阅读和运行。任何 agent 都不在主文件夹里直接改文件或切分支。
 - 每个任务在自己的 worktree 里做（worktree = 同一个仓库的另一个工作目录，有自己的分支和暂存区）。
 
+**分支名固定为 `task/<Issue号>`**（例：Issue #2 → `task/2`，worktree 在 `.worktrees/task/2`）。名字由 Issue 号唯一决定，这是第 2 节「锁」的基础。
+
 **新任务：**
 
 ```powershell
 git fetch origin
-git worktree add .worktrees/<分支名> -b <分支名> origin/main
-Set-Location .worktrees/<分支名>
+git worktree add .worktrees/task/<号> -b task/<号> origin/main
+Set-Location .worktrees/task/<号>
 ```
 
 **恢复已有分支的任务：**
@@ -28,18 +30,24 @@ Set-Location .worktrees/<分支名>
 - **`Set-Location` 之后的所有编辑、测试、提交、推送、提 PR，都必须在该 worktree 目录里执行。** 每次执行写操作前用 `git rev-parse --show-toplevel` 确认自己所在的目录。
 - 禁止使用 `git worktree add -B`、`--force` 或 `git branch -f` 绕过冲突保护；遇到冲突就停下来报告。
 - `.worktrees/` 已在 `.gitignore` 中，不会被提交。分支名含 `/` 会形成多层目录，这是正常的。
-- 任务合并后由作者清理：`git worktree remove .worktrees/<分支名>`。
+- 任务合并后由作者清理，**先回到主文件夹再删除**：
+  ```powershell
+  Set-Location D:\桌面\deploy-lab
+  git worktree remove .worktrees/task/<号>
+  ```
 
 ## 2. 一个任务只有一个写入者
 
 **唯一负责人：** Issue 上的 `owner:*` 标签决定谁是负责人，只有负责人可以认领和写入。
 
-**认领前检查（任何一项不满足就停下，告诉人类）：**
-1. Issue 下没有其他人的有效认领留言
-2. `git worktree list` 中没有该任务的 worktree
-3. `git branch -a` 中没有该任务的分支（有的话按「恢复」流程，并先确认上一个会话已结束）
+**锁 = 成功创建 `task/<号>` 分支。** `git worktree add ... -b task/<号>` 是原子操作：分支已存在或路径已被占用时，第二个执行者一定失败。因此：
+1. 先 `gh issue view <号> --comments` 确认没有有效认领，再执行第 1 节「新任务」命令
+2. **命令成功 = 认领成功**，随后在 Issue 下留言 `认领：<agent>，会话 <启动时间>，worktree .worktrees/task/<号>`
+3. **命令失败（分支或路径已存在）= 别人已持有锁**，立即停下告诉人类，不得改名重试、不得换分支名绕过
 
-**认领：** 在 Issue 下留言 `认领：<agent>，分支 <分支名>，worktree .worktrees/<分支名>`。
+远端的锁：若 `origin/task/<号>` 已存在而本地没有，同样视为已被认领，停下询问人类。
+
+**人类侧规则：** 同一个 agent 同一时间只开一个会话处理同一个 Issue。
 
 **一个 worktree 同一时间只能有一个会话。** 新会话要接手已有 worktree 前，必须先由人类确认之前的会话已经结束。
 

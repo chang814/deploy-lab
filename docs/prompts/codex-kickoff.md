@@ -23,12 +23,12 @@
 - 提交信息用约定式提交，末尾加一行 `Agent: gpt`。
 
 **你的第一个任务：Issue #2「P0-3 审定灵敏度与 FOV 规格」。**
-1. `gh issue view 2 --comments` 读任务，按协议第 2 节做认领前检查，通过后在 Issue 下留言认领
-2. 建 worktree 并进入：
+1. `gh issue view 2 --comments` 读任务，确认没有有效认领
+2. 建 worktree（**命令成功即认领成功；失败就停下告诉我**），进入后在 Issue 下留言认领：
    ```powershell
    git fetch origin
-   git worktree add .worktrees/docs/2-sensitivity-spec -b docs/2-sensitivity-spec origin/main
-   Set-Location .worktrees/docs/2-sensitivity-spec
+   git worktree add .worktrees/task/2 -b task/2 origin/main
+   Set-Location .worktrees/task/2
    ```
    **之后所有编辑、提交、推送、提 PR 都在这个目录里做**，写操作前用 `git rev-parse --show-toplevel` 确认位置
 3. 逐条复算 `docs/04-sensitivity-spec.md` 中的公式和表格，补全第 4 节的待确认问题，并新增一节「单元测试用例表」（输入 → 期望输出 → 允许误差）
