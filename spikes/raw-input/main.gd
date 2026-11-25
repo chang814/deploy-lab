@@ -46,16 +46,10 @@ var round_invalid_reason: String = ""  # 空字符串 = 有效
 var yaw_deg: float = 0.0
 var pitch_deg: float = 0.0
 
-# 引导测试（data/test_plan.json）：屏幕顶部告诉测试人现在该做什么，自动填写备注、计数、换步骤
+# 引导测试（data/test_plan.json）：屏幕顶部告诉测试人现在该做什么；逻辑在 guide_state.gd 中（有单元测试）
+const GuideState = preload("res://guide_state.gd")
 const TEST_PLAN_PATH: String = "res://data/test_plan.json"
-var _plan_steps: Array = []
-var _plan_done_text: String = ""
-var guide_step: int = 0
-var guide_rounds_ok: int = 0
-var guide_prepared: bool = true
-var guide_message: String = ""
-var round_active: bool = false      # 按过中键、还没按右键
-var round_step: int = -1            # 本轮是在哪一步开始的
+var guide: GuideState = GuideState.new()
 var _banner: Label
 
 var _camera: Camera3D
@@ -97,73 +91,44 @@ func _ready() -> void:
 	_build_ui()
 	_set_captured(false)
 	_load_plan()
-	_enter_step(0)
 
 
 func _load_plan() -> void:
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(TEST_PLAN_PATH))
 	if typeof(parsed) == TYPE_DICTIONARY and (parsed as Dictionary).has("steps"):
-		_plan_steps = (parsed as Dictionary)["steps"]
-		_plan_done_text = (parsed as Dictionary).get("done", "全部完成")
+		guide.setup((parsed as Dictionary)["steps"], str((parsed as Dictionary).get("done", "全部完成")))
+		_note.text = guide.current_id()
+		_note.editable = false
 	else:
 		push_warning("无法读取测试步骤 %s，只能手动测试" % TEST_PLAN_PATH)
 
 
-func _enter_step(i: int) -> void:
-	guide_step = i
-	guide_rounds_ok = 0
-	if i >= _plan_steps.size():
-		_set_captured(false)
-		return
-	var step: Dictionary = _plan_steps[i]
-	_note.text = step["id"]
-	guide_prepared = str(step.get("prepare", "")).is_empty()
-	if not guide_prepared:
-		_set_captured(false)  # 让测试人去改 Windows 设置
-
-
-func _guide_after_log(written: bool) -> void:
-	if _plan_steps.is_empty() or guide_step >= _plan_steps.size():
-		return
-	if not written:
-		guide_message = "⚠ 这一轮没写进文件（见左下角），请重来：先按中键"
-	elif not round_active:
-		guide_message = "⚠ 这一轮已经记录过了。先按中键开始新的一轮"
-	elif round_step != guide_step:
-		guide_message = "⚠ 这一轮是在上一步开始的，不计入。请按中键重新开始"
-	elif not round_invalid_reason.is_empty():
-		guide_message = "⚠ 这一轮作废了（%s），不计入。请按中键重来" % round_invalid_reason
-	elif round_events == 0:
-		guide_message = "⚠ 这一轮没有检测到移动，不计入。按中键后记得移动鼠标"
-	else:
-		guide_rounds_ok += 1
-		guide_message = "✓ 第 %d 轮已记录" % guide_rounds_ok
-		var need: int = int((_plan_steps[guide_step] as Dictionary)["rounds"])
-		if guide_rounds_ok >= need:
-			guide_message = "✓ 这一步完成！"
-			_enter_step(guide_step + 1)
-	round_active = false
+func _after_guide_change(release: bool) -> void:
+	if guide.enabled():
+		_note.text = guide.current_id()
+	if release:
+		_set_captured(false)  # 需要去改 Windows 设置，或已经全部完成
 
 
 func _banner_text() -> String:
-	if _plan_steps.is_empty():
+	if not guide.enabled():
 		return ""
-	if guide_step >= _plan_steps.size():
-		return "🎉 " + _plan_done_text
-	var step: Dictionary = _plan_steps[guide_step]
+	if guide.finished():
+		return "🎉 " + guide.done_text
+	var step: Dictionary = guide.current()
 	var head: String = "第 %d / %d 步：%s　　已完成 %d / %d 轮" % [
-		guide_step + 1, _plan_steps.size(), step["id"], guide_rounds_ok, int(step["rounds"]),
+		guide.step + 1, guide.steps.size(), step["id"], guide.rounds_ok, int(step["rounds"]),
 	]
-	if not guide_prepared:
+	if not guide.prepared:
 		return head + "\n【先做准备】" + str(step["prepare"])
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return head + "\n按 C 锁定鼠标，开始这一步"
 	var now: String
-	if round_active and round_step == guide_step:
+	if guide.round_active and guide.round_step == guide.step:
 		now = "本轮进行中：%s，然后停下，按【右键】记录" % step["do"]
 	else:
 		now = "① 鼠标别动，按【中键】　② %s　③ 停下，按【右键】" % step["do"]
-	return head + "\n" + now + ("\n" + guide_message if not guide_message.is_empty() else "")
+	return head + "\n" + now + ("\n" + guide.message if not guide.message.is_empty() else "")
 
 
 func _input(event: InputEvent) -> void:
@@ -173,12 +138,14 @@ func _input(event: InputEvent) -> void:
 	if button != null and button.pressed:
 		if button.button_index == MOUSE_BUTTON_MIDDLE:
 			_start_round()
-			round_active = true
-			round_step = guide_step
-			guide_message = ""
+			guide.on_middle()
 		elif button.button_index == MOUSE_BUTTON_RIGHT:
-			# 不管引导是否计入，都要写一行：基准计数器每次右键都会写，两边必须一一对应
-			_guide_after_log(_log_round())
+			# 每次右键都写一行（与基准按时间戳配对）；引导判断不该计入的，写成作废行
+			var reason: String = guide.invalid_reason_before_log()
+			if not reason.is_empty() and round_invalid_reason.is_empty():
+				round_invalid_reason = reason
+			var written: bool = _log_round()
+			_after_guide_change(guide.on_logged(written, round_invalid_reason, round_events))
 		return
 	var motion: InputEventMouseMotion = event as InputEventMouseMotion
 	if motion == null:
@@ -215,11 +182,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	match key.keycode:
 		KEY_C:
 			_set_captured(true)
-			guide_prepared = true
+			guide.on_capture()
 		KEY_N:
 			# 跳过当前步骤（例如某项暂时做不了）
-			guide_message = "已跳过上一步"
-			_enter_step(guide_step + 1)
+			if guide.enabled() and not guide.finished():
+				_after_guide_change(guide.skip())
 		KEY_ESCAPE:
 			_set_captured(false)
 			_invalidate_round("释放了鼠标")
@@ -312,8 +279,17 @@ func _apply_camera() -> void:
 
 
 ## 写一行记录；成功返回 true。
+const CSV_HEADER: String = "time,t_unix,round,valid,invalid_reason,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale"
+
+
 func _log_round() -> bool:
 	var is_new: bool = not FileAccess.file_exists(log_path)
+	if not is_new:
+		var first: String = FileAccess.get_file_as_string(log_path).get_slice("\n", 0).strip_edges()
+		if first != CSV_HEADER:
+			push_error("记录文件 %s 的列与当前版本不同" % log_path)
+			_last_log_line = "⚠ 记录文件是旧版本格式，请换一个 --log 路径或移走旧文件"
+			return false
 	var f: FileAccess = FileAccess.open(log_path, FileAccess.WRITE if is_new else FileAccess.READ_WRITE)
 	if f == null:
 		push_error("无法写入 %s" % log_path)
@@ -321,12 +297,14 @@ func _log_round() -> bool:
 		return false
 	f.seek_end()
 	if is_new:
-		f.store_line("time,round,valid,invalid_reason,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale")
+		f.store_line(CSV_HEADER)
 	var size_px: Vector2i = get_viewport().get_visible_rect().size
-	# CSV 不使用引号：把英文逗号和双引号替换为中文标点
-	var note: String = _note.text.replace(",", "，").replace("\"", "”")
-	var line: String = "%s,%d,%d,%s,%s,%.0f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.0f,%.6f,%.9f,%d,%d,%d,%.4f" % [
-		Time.get_datetime_string_from_system(), round_index,
+	# CSV 不使用引号：把英文逗号和双引号替换为中文标点。引导模式下用本轮开始时的步骤 id
+	var raw_note: String = guide.round_note if guide.enabled() else _note.text
+	var note: String = raw_note.replace(",", "，").replace("\"", "”")
+	# t_unix：系统时钟的 Unix 秒（含毫秒），与基准计数器按此配对
+	var line: String = "%s,%.3f,%d,%d,%s,%s,%.0f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.0f,%.6f,%.9f,%d,%d,%d,%.4f" % [
+		Time.get_datetime_string_from_system(), Time.get_unix_time_from_system(), round_index,
 		1 if round_invalid_reason.is_empty() else 0, round_invalid_reason.replace(",", "，"),
 		note, dpi, sensitivity,
 		round_screen_x, round_screen_y, round_rel_x, round_rel_y,
