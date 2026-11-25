@@ -82,6 +82,11 @@ class CompareTest(unittest.TestCase):
         c = cr.compare(gg, rr)
         self.assertEqual([(x.godot_x, x.raw_x) for x in c.compared], [(3.0, 3), (5.0, 5)])
 
+    def test_repeated_right_clicks_do_not_inflate_sample_count(self):
+        gg = [g(1, 100, 0) for _ in range(5)]
+        rr = [r(1, 100, 0) for _ in range(5)]
+        self.assertIn("**证据不足**", cr.verdict(cr.compare(gg, rr)))
+
     def test_session_count_mismatch_cannot_judge(self):
         c = cr.compare([g(1, 1, 0), g(1, 1, 0, time="2026-11-25T22:10:00")], [r(1, 1, 0), r(2, 1, 0)])
         self.assertIn("无法判定", cr.verdict(c))

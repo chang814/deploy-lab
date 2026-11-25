@@ -172,11 +172,14 @@ def verdict(c: Comparison) -> str:
                     "请对这些条件重测；如果偏差能稳定复现，则按不通过处理。")
         return (f"**不通过**：{len(bad)}/{len(c.compared)} 个轮次不一致（偏差中位数 {statistics.median(diffs):g} counts）。"
                 "请看「合计比例」列判断是固定比例丢失还是随机偏差，并评估改用 GDExtension 读取 Raw Input。")
-    thin = [note for note, rs in _groups(c).items() if len(rs) < MIN_ROUNDS_PER_GROUP]
+    # 样本数按不同的（会话, 轮号）计算：同一轮重复按右键不增加样本
+    thin = [note for note, rs in _groups(c).items()
+            if len({x.key[:2] for x in rs}) < MIN_ROUNDS_PER_GROUP]
     if thin:
         return (f"**证据不足**：已有 {len(c.compared)} 轮全部一致，但以下分组不足 {MIN_ROUNDS_PER_GROUP} 轮：{'、'.join(thin)}。"
                 "补测后再判定。")
-    return (f"**数据层通过**：{len(c.compared)} 个有效轮次两轴计数全部与 Raw Input 完全一致，"
+    rounds = len({x.key[:2] for x in c.compared})
+    return (f"**数据层通过**：{rounds} 个有效轮次（{len(c.compared)} 条记录）两轴计数全部与 Raw Input 完全一致，"
             f"每组至少 {MIN_ROUNDS_PER_GROUP} 轮。还需人工确认测试条件覆盖了 T1–T4，并完成 T5。")
 
 
