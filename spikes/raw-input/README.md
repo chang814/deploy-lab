@@ -22,7 +22,7 @@ python -I -m unittest discover -s spikes/raw-input/tools -p "test_*.py"
    ```powershell
    python -I tools/rawinput_counter.py --csv rawinput_runs.csv
    ```
-3. 在 Godot 中按 F5 运行 spike。在左下角填入 **DPI**、**CS2 灵敏度**，以及本组的**备注**（如 `T1-慢`）
+3. 在 Godot 中按 F5 运行 spike（也可以不打开编辑器，直接运行：`Godot.exe --path <本目录> -- --log=<CSV 完整路径>`，用 `--log` 把记录写到指定位置）。在左下角填入 **DPI**、**CS2 灵敏度**，以及本组的**备注**（如 `T1-慢`）
 4. 按 **C** 锁定鼠标
 
 ## 一轮测量的固定流程

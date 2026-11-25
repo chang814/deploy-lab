@@ -14,7 +14,9 @@ const LookMath = preload("res://look_math.gd")
 # 场景布置参数（不是手感参数）
 const PILLAR_RADIUS_M: float = 20.0
 const EYE_HEIGHT_M: float = 1.7
-const LOG_PATH: String = "user://spike_runs.csv"
+const DEFAULT_LOG_PATH: String = "user://spike_runs.csv"
+# 可用启动参数覆盖：godot --path <工程目录> -- --log=<CSV 完整路径>
+var log_path: String = DEFAULT_LOG_PATH
 
 var dpi: float = 800.0
 var sensitivity: float = 1.0
@@ -52,6 +54,10 @@ var _last_log_line: String = "（尚未记录）"
 
 func _ready() -> void:
 	Input.use_accumulated_input = false
+	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("--log="):
+			log_path = arg.trim_prefix("--log=")
+			DirAccess.make_dir_recursive_absolute(log_path.get_base_dir())
 	var d: Dictionary = LookMath.load_defaults()
 	if d.is_empty():
 		get_tree().quit(1)
@@ -169,7 +175,7 @@ func _process(_delta_s: float) -> void:
 		"",
 		"鼠标中键 开始新一轮 · 右键 结束并记录 · Z 视角回正（会作废本轮）· F 全屏 · C 锁定 · Esc 释放",
 		"上次记录：%s" % _last_log_line,
-		"记录文件：%s" % ProjectSettings.globalize_path(LOG_PATH),
+		"记录文件：%s" % ProjectSettings.globalize_path(log_path),
 	]
 	_info.text = "\n".join(lines)
 	_settings.visible = not captured
@@ -198,10 +204,11 @@ func _apply_camera() -> void:
 
 
 func _log_round() -> void:
-	var is_new: bool = not FileAccess.file_exists(LOG_PATH)
-	var f: FileAccess = FileAccess.open(LOG_PATH, FileAccess.WRITE if is_new else FileAccess.READ_WRITE)
+	var is_new: bool = not FileAccess.file_exists(log_path)
+	var f: FileAccess = FileAccess.open(log_path, FileAccess.WRITE if is_new else FileAccess.READ_WRITE)
 	if f == null:
-		push_error("无法写入 %s" % LOG_PATH)
+		push_error("无法写入 %s" % log_path)
+		_last_log_line = "⚠ 写入失败：%s" % log_path
 		return
 	f.seek_end()
 	if is_new:
