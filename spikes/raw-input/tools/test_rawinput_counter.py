@@ -90,6 +90,21 @@ class CounterTest(unittest.TestCase):
         r = self.rows()[0]
         self.assertEqual((r["valid"], r["sync_lost"], r["read_errors"]), ("0", "1", "0"))
 
+    def test_old_csv_header_is_rejected(self) -> None:
+        old = os.path.join(self.dir.name, "old.csv")
+        with open(old, "w", newline="", encoding="utf-8") as f:
+            f.write("time,round,raw_x,raw_y,events,absolute_events,devices\n")
+        with self.assertRaises(rc.CsvHeaderMismatch):
+            rc.Counter(old)
+
+    def test_same_header_appends(self) -> None:
+        self.c.on_mouse(packet(buttons=MID))
+        self.c.on_mouse(packet(buttons=RIGHT))
+        again = rc.Counter(self.path)
+        again.on_mouse(packet(buttons=MID))
+        again.on_mouse(packet(buttons=RIGHT))
+        self.assertEqual(len(self.rows()), 2)
+
     def test_new_round_clears_flags(self) -> None:
         self.c.on_mouse(packet(dx=5, buttons=MID))
         self.c.on_mouse(packet(buttons=MID))

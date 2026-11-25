@@ -124,9 +124,24 @@ kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
 
+CSV_HEADER = [
+    "time", "round", "valid", "raw_x", "raw_y", "events",
+    "absolute_events", "read_errors", "boundary_motion", "sync_lost", "devices",
+]
+
+
+class CsvHeaderMismatch(Exception):
+    pass
+
+
 class Counter:
     def __init__(self, csv_path: str) -> None:
         self.csv_path = csv_path
+        if os.path.exists(csv_path):
+            with open(csv_path, newline="", encoding="utf-8") as f:
+                existing = next(csv.reader(f), None)
+            if existing is not None and existing != CSV_HEADER:
+                raise CsvHeaderMismatch(f"已有记录文件的列与当前版本不同，请换一个 --csv 路径：{csv_path}")
         self.round_index = 0
         self.devices: set[int] = set()
         # 读取失败的包可能正好是一次点击，之后的轮号与 Godot 可能已错位，
@@ -182,10 +197,7 @@ class Counter:
         with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             if is_new:
-                w.writerow([
-                    "time", "round", "valid", "raw_x", "raw_y", "events",
-                    "absolute_events", "read_errors", "boundary_motion", "sync_lost", "devices",
-                ])
+                w.writerow(CSV_HEADER)
             w.writerow([
                 datetime.datetime.now().isoformat(timespec="seconds"),
                 self.round_index, int(self.valid()), self.x, self.y, self.events,
@@ -215,7 +227,10 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=0.0, help="运行秒数，0 表示一直运行（Ctrl+C 退出）")
     args = parser.parse_args()
 
-    counter = Counter(os.path.abspath(args.csv))
+    try:
+        counter = Counter(os.path.abspath(args.csv))
+    except CsvHeaderMismatch as e:
+        sys.exit(str(e))
     started = time.monotonic()
 
     @WNDPROC
