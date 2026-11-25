@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 ### 变更
+- 审定灵敏度与 FOV 规格（Issue #2，GPT，待 Claude 审查）：修正 16:10 FOV 舍入，补充复算结果、开镜/pitch 待测量方案及单元测试用例表
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
 
 ### 新增
