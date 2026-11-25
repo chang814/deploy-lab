@@ -22,7 +22,7 @@
 
 ```
 Issue（人类或 Claude 创建，打角色标签 owner:claude / owner:gpt / owner:gemini）
-  → 分支 feat/<issue号>-<短名>
+  → 分支 task/<issue号>（在 .worktrees/ 中，见 05-shared-folder-protocol.md）
   → 作者 agent 实现 + 自测
   → PR（模板里写：做了什么 / 怎么验证 / 风险）
   → 交叉审查（另一家模型，输出结构化审查意见）
