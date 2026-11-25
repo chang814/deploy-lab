@@ -1,0 +1,24 @@
+# Godot 4
+.godot/
+.import/
+export.cfg
+export_presets.cfg
+*.translation
+mono_crash.*.json
+
+# Builds
+build/
+dist/
+
+# 测量原始录像（体积大，不入库，只提交整理后的 csv）
+recordings/
+
+# 从游戏文件提取的任何内容一律不入库（见 PROJECT_RULES.md 红线）
+extracted/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/settings.local.json
