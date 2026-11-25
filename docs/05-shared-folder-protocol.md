@@ -53,6 +53,11 @@ Set-Location .worktrees/<分支名>
 
 **交接：** 负责人留言 `交接给 <agent>`，人类确认并修改 `owner:*` 标签后，新负责人才能写入。
 
+**方式 A 的例外（Claude 调度 Codex，见 `docs/02-workflow.md`）：** 对 `owner:gpt` 的 Issue，Claude 可以作为 GPT 的**代理**来认领、提交和推送，此时不需要人类确认交接，前提是：
+- 认领留言写明「认领：gpt（由 claude 用 codex exec 调度）」，表示负责人仍然是 GPT，Claude 只是执行人
+- Codex 只通过 Claude 发起的 `codex exec` 写入这个 worktree；`codex exec` 运行期间 Claude 不碰这个 worktree，进程退出后 Claude 才提交
+- 同一个 Issue 不得同时有人类另开的 Codex 会话（方式 B）在写；如果人类想改用方式 B 接手，先按上面的「交接」规则走
+
 **审查只读：** 审查者不改作者的 worktree。需要跑测试时，在自己的临时 worktree 中检出 PR 分支运行（`git worktree add .worktrees/review-<PR号> --detach origin/<分支名>`），用完删除。意见写进 PR 评论。
 
 ## 3. 交接都留在 GitHub 上
