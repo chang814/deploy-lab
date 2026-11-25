@@ -1,6 +1,6 @@
 # 共享文件夹协作协议（Claude ⇄ Codex）
 
-项目主文件夹：`D:\桌面\deploy-lab`。Claude Code 和 Codex 都在这台电脑上、对着同一个文件夹工作。
+项目主文件夹：`D:\桌面\mcs`。Claude Code 和 Codex 都在这台电脑上、对着同一个文件夹工作。
 两个 agent 同时在一个文件夹里切分支、改文件会互相覆盖，所以遵守下面的规则。
 
 ## 1. 主文件夹只读，改动都在 worktree 里做
@@ -32,7 +32,7 @@ Set-Location .worktrees/<分支名>
 - `.worktrees/` 已在 `.gitignore` 中，不会被提交。分支名含 `/` 会形成多层目录，这是正常的。
 - 任务合并后由作者清理，**先回到主文件夹再删除**：
   ```powershell
-  Set-Location D:\桌面\deploy-lab
+  Set-Location D:\桌面\mcs
   git worktree remove .worktrees/task/<号>
   ```
 
