@@ -3,6 +3,10 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+### 新增
+- P0-4 原始鼠标输入验证工程 `spikes/raw-input/`：计数统计、360° 标柱场景、CSV 记录、实测步骤
+- 视角换算模块 `look_math.gd` 与 33 条单元测试（来自灵敏度规格第 5 节）
+
 ### 变更
 - 审定灵敏度与 FOV 规格（Issue #2，GPT，待 Claude 审查）：修正 16:10 FOV 舍入，补充复算结果、开镜/pitch 待测量方案及单元测试用例表
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
