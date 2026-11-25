@@ -53,6 +53,11 @@ Set-Location .worktrees/<分支名>
 
 **交接：** 负责人留言 `交接给 <agent>`，人类确认并修改 `owner:*` 标签后，新负责人才能写入。
 
+**方式 A 的例外（Claude 调度 Codex，见 `docs/02-workflow.md`）：** 对 `owner:gpt` 的 Issue，Claude 可以作为 GPT 的**代理**来认领、提交和推送，此时不需要人类确认交接，前提是：
+- 认领留言写明「认领：gpt（由 claude 用 codex exec 调度）」，表示负责人仍然是 GPT，Claude 只是执行人
+- Codex 只通过 Claude 发起的 `codex exec` 写入这个 worktree；`codex exec` 运行期间 Claude 不碰这个 worktree，进程退出后 Claude 才提交
+- 同一个 Issue 不得同时有人类另开的 Codex 会话（方式 B）在写；如果人类想改用方式 B 接手，先按上面的「交接」规则走
+
 **审查只读：** 审查者不改作者的 worktree。需要跑测试时，在自己的临时 worktree 中检出 PR 分支运行（`git worktree add .worktrees/review-<PR号> --detach origin/<分支名>`），用完删除。意见写进 PR 评论。
 
 ## 3. 交接都留在 GitHub 上
@@ -79,6 +84,10 @@ gh pr review <号> --comment --body "..." # 提交审查意见
 ## 5. 同步与冲突
 
 - 发现主文件夹不在 `main`，或有未提交的改动：**停下**，告诉人类，不要自行清理。
+  - **例外仅适用于：主文件夹仍在 `main` 分支，只是有未提交改动，且人类已确认这些改动属于预期**（例如人类在主文件夹打开 Godot 编辑器或运行工程做测试，编辑器自动改写了文件）。此时 agent 可以**保持主文件夹原样**，继续在自己的 worktree 中工作：新 worktree 基于 `origin/main`，不受主文件夹未提交改动的影响。主文件夹不在 `main` 时没有例外，必须停下。
+  - 任何 agent 都不得清理、提交或修改主文件夹里的这些改动。保留还是丢弃由人类决定。
+  - 如果人类决定把这类改动纳入项目（例如 Godot 编辑器对 `project.godot` 的正常整理），由负责相关 Issue 的 agent 在**自己认领的 worktree 中复现同样的改动**，再走正常的 PR 和审查流程；不得直接在主文件夹提交。
+  - 主文件夹有未提交改动时，`git pull --ff-only` 可能失败。此时由人类处理，agent 不要强行覆盖。
 - 两个任务需要改同一个文件：先合并一个，另一个在自己的 worktree 中执行：
 
 ```powershell
