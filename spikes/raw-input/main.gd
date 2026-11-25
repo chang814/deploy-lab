@@ -48,7 +48,8 @@ var pitch_deg: float = 0.0
 
 # 引导测试（data/test_plan.json）：屏幕顶部告诉测试人现在该做什么；逻辑在 guide_state.gd 中（有单元测试）
 const GuideState = preload("res://guide_state.gd")
-const TEST_PLAN_PATH: String = "res://data/test_plan.json"
+# 可用启动参数换成别的步骤文件：-- --plan=res://data/test_plan_topup.json
+var test_plan_path: String = "res://data/test_plan.json"
 var guide: GuideState = GuideState.new()
 var _banner: Label
 
@@ -62,6 +63,8 @@ var _last_log_line: String = "（尚未记录）"
 func _ready() -> void:
 	Input.use_accumulated_input = false
 	for arg: String in OS.get_cmdline_user_args():
+		if arg.begins_with("--plan="):
+			test_plan_path = arg.trim_prefix("--plan=").strip_edges()
 		if arg.begins_with("--log="):
 			var requested: String = arg.trim_prefix("--log=").strip_edges()
 			if requested.is_empty():
@@ -94,13 +97,13 @@ func _ready() -> void:
 
 
 func _load_plan() -> void:
-	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(TEST_PLAN_PATH))
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(test_plan_path))
 	if typeof(parsed) == TYPE_DICTIONARY and (parsed as Dictionary).has("steps"):
 		guide.setup((parsed as Dictionary)["steps"], str((parsed as Dictionary).get("done", "全部完成")))
 		_note.text = guide.current_id()
 		_note.editable = false
 	else:
-		push_warning("无法读取测试步骤 %s，只能手动测试" % TEST_PLAN_PATH)
+		push_warning("无法读取测试步骤 %s，只能手动测试" % test_plan_path)
 
 
 func _after_guide_change(release: bool) -> void:

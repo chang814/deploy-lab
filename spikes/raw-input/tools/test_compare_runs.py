@@ -48,10 +48,19 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(len(c.godot_unpaired), 1)
         self.assertIn("无法判定", cr.verdict(c))
 
-    def test_pairs_nearest_within_window(self):
+    def test_two_baseline_rows_in_window_is_ambiguous(self):
         c = cr.compare([g(1, 5, 0, T0)], [r(1, 9, 0, T0 - 0.4), r(2, 5, 0, T0 + 0.01)])
-        self.assertEqual(c.compared[0].raw_x, 5)
-        self.assertEqual(c.raw_extra, 1)
+        self.assertEqual(len(c.ambiguous), 1)
+        self.assertIn("无法判定", cr.verdict(c))
+
+    def test_codex_counterexample_delay_is_not_hidden(self):
+        # 基准两次右键 (100.000s, 100) 和 (100.200s, 90)；Godot 有效行 100.210s=90，重复作废行 100.220s
+        gg, rr = five()
+        gg += [g(9, 90, 0, T0 + 100.21), g(9, 90, 0, T0 + 100.22, valid="0", reason="重复记录")]
+        rr += [r(9, 100, 0, T0 + 100.0), r(10, 90, 0, T0 + 100.2)]
+        c = cr.compare(gg, rr)
+        self.assertNotIn("通过", cr.verdict(c))
+        self.assertIn("无法判定", cr.verdict(c))
 
     def test_outside_window_not_paired(self):
         c = cr.compare([g(1, 5, 0, T0)], [r(1, 5, 0, T0 + 0.8)])
@@ -88,7 +97,7 @@ class CompareTest(unittest.TestCase):
             [g(1, 10, 0, T0), g(2, 99, 0, T0 + 1, valid="0", reason="跨步骤"), g(3, 5, 0, T0 + 2)],
             [r(1, 10, 0, T0), r(2, 50, 0, T0 + 1), r(3, 5, 0, T0 + 2, valid="0", boundary_motion=1)],
         )
-        self.assertEqual([x.key[1] for x in c.compared], [1])
+        self.assertEqual([x.key[2] for x in c.compared], [1])
         self.assertEqual(len(c.invalid), 2)
         self.assertIn("boundary_motion", c.invalid[1][1])
 
@@ -96,8 +105,20 @@ class CompareTest(unittest.TestCase):
         gg = [g(1, 90, 0, T0), g(2, 50, 0, T0 + 1), g(1, 100, 0, T0 + 60)]
         rr = [r(1, 100, 0, T0), r(2, 50, 0, T0 + 1), r(1, 100, 0, T0 + 60)]
         c = cr.compare(gg, rr)
-        self.assertEqual({x.key for x in c.compared}, {(1, 1), (1, 2), (2, 1)})
+        self.assertEqual({x.key for x in c.compared}, {(1, 1, 1), (1, 1, 2), (1, 2, 1)})
         self.assertIn("**不通过**", cr.verdict(c))
+
+    def test_merge_two_runs_completes_groups(self):
+        # 第一次只有 4 轮，补测 1 轮（轮号同样从 1 开始），合并后满 5 轮
+        g1 = [g(i, 10, 0, T0 + i) for i in range(1, 5)]
+        r1 = [r(i, 10, 0, T0 + i) for i in range(1, 5)]
+        g2, r2 = [g(1, 20, 0, T0 + 500)], [r(1, 20, 0, T0 + 500)]
+        first = cr.compare(g1, r1, run=1)
+        self.assertIn("**证据不足**", cr.verdict(first))
+        merged = cr.merge([first, cr.compare(g2, r2, run=2)])
+        self.assertEqual(len({x.key for x in merged.compared}), 5)
+        self.assertIn("**数据层通过**", cr.verdict(merged))
+        self.assertIn("第2组文件", cr.render(merged) + merged.compared[-1].label)
 
     def test_fractional_godot_counts_not_exact(self):
         c = cr.compare([g(1, 10.5, 0, T0)], [r(1, 10, 0, T0)])
@@ -149,6 +170,13 @@ class FileFormatTest(unittest.TestCase):
         c = cr.compare([a for a, _ in rows], [b for _, b in rows])
         self.assertTrue(c.legacy)
         self.assertIn("**数据层通过**", cr.verdict(c))
+
+    def test_legacy_format_rejects_shifted_rounds(self):
+        # Godot 第 1–5 轮，基准第 2–6 轮（漏首行、多末行），时间都在相邻秒内
+        gs = [self._legacy(i, f"2026-11-25T23:40:0{i}", 100)[0] for i in range(1, 6)]
+        rs = [self._legacy(i + 1, f"2026-11-25T23:40:0{i}", 100)[1] for i in range(1, 6)]
+        with self.assertRaises(cr.FormatError):
+            cr.compare(gs, rs)
 
     def test_legacy_format_rejects_mismatched_rows(self):
         a, b = self._legacy(1, "2026-11-25T23:40:00", 5)

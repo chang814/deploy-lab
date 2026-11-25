@@ -32,7 +32,7 @@ class FormatError(Exception):
 
 @dataclass
 class RoundResult:
-    key: tuple[int, int]  # (Godot 会话, Godot 轮号)
+    key: tuple[int, int, int]  # (第几组文件, Godot 会话, Godot 轮号)
     t: float
     note: str
     godot_x: float
@@ -44,7 +44,7 @@ class RoundResult:
 
     @property
     def label(self) -> str:
-        return f"会话{self.key[0]}·第{self.key[1]}轮"
+        return _label(self.key)
 
     @property
     def diff_x(self) -> float:
@@ -70,6 +70,7 @@ class Comparison:
     raw_extra: int = 0
     invalid: list[tuple[str, str]] = field(default_factory=list)
     no_motion: list[str] = field(default_factory=list)
+    ambiguous: list[str] = field(default_factory=list)
     legacy: bool = False
 
 
@@ -97,6 +98,9 @@ def _with_legacy_times(godot_rows: list[dict], raw_rows: list[dict]) -> tuple[li
         tg, tr = _legacy_time(gr), _legacy_time(rr)
         if abs(tg - tr) > LEGACY_MAX_SKEW_S:
             raise FormatError(f"旧格式第 {i + 1} 行两边时间相差 {abs(tg - tr):.0f} 秒，无法按顺序配对")
+        # 旧版两个程序都只在中键时加轮号、同时启动，轮号必须逐行相同；否则说明错位（例如一边漏记一行）
+        if gr["round"] != rr["round"]:
+            raise FormatError(f"旧格式第 {i + 1} 行轮号不一致（Godot {gr['round']} / 基准 {rr['round']}），无法证明对应关系")
         g_out.append({**gr, "t_unix": f"{i:.3f}"})
         r_out.append({**rr, "t_unix": f"{i:.3f}"})
     return g_out, r_out
@@ -114,32 +118,42 @@ def _godot_keys(rows: list[dict]) -> list[tuple[int, int]]:
     return keys
 
 
-def compare(godot_rows: list[dict], raw_rows: list[dict]) -> Comparison:
+def _label(key: tuple[int, int, int]) -> str:
+    run, session, n = key
+    return (f"第{run}组文件·" if run > 1 else "") + f"会话{session}·第{n}轮"
+
+
+def compare(godot_rows: list[dict], raw_rows: list[dict], run: int = 1) -> Comparison:
     c = Comparison()
     legacy = (godot_rows and "t_unix" not in godot_rows[0]) or (raw_rows and "t_unix" not in raw_rows[0])
     if legacy:
         godot_rows, raw_rows = _with_legacy_times(godot_rows, raw_rows)
         c.legacy = True
-    g = sorted(zip(_godot_keys(godot_rows), godot_rows), key=lambda kr: float(kr[1]["t_unix"]))
+    keys = [(run, s, n) for s, n in _godot_keys(godot_rows)]
+    g = sorted(zip(keys, godot_rows), key=lambda kr: float(kr[1]["t_unix"]))
     r = sorted(raw_rows, key=lambda row: float(row["t_unix"]))
+    tr = [float(row["t_unix"]) for row in r]
+    tgs = [float(gr["t_unix"]) for _, gr in g]
+
+    def within(a: float, b: float) -> bool:
+        return abs(a - b) <= MAX_PAIR_SKEW_S
+
+    # 只接受「双向唯一」的配对：时间窗口内恰好一行基准，且这行基准的窗口内也恰好只有这一行 Godot。
+    # 两边记录的是处理/写入时刻，毫秒时间戳不能保证就是同一次点击，所以有歧义时宁可判为无法判定。
     used = [False] * len(r)
-    j = 0
-    for key, gr in g:
-        tg = float(gr["t_unix"])
-        while j < len(r) and float(r[j]["t_unix"]) < tg - MAX_PAIR_SKEW_S:
-            j += 1
-        # 在时间窗口内找最近的、还没用过的基准行
-        best, best_dt = None, None
-        k = j
-        while k < len(r) and float(r[k]["t_unix"]) <= tg + MAX_PAIR_SKEW_S:
-            dt = abs(float(r[k]["t_unix"]) - tg)
-            if not used[k] and (best_dt is None or dt < best_dt):
-                best, best_dt = k, dt
-            k += 1
-        label = f"会话{key[0]}·第{key[1]}轮（{gr.get('time', '')}）"
-        if best is None:
+    for gi, (key, gr) in enumerate(g):
+        tg = tgs[gi]
+        label = f"{_label(key)}（{gr.get('time', '')}）"
+        cands = [k for k in range(len(r)) if within(tr[k], tg)]
+        if not cands:
             c.godot_unpaired.append(label)
             continue
+        if len(cands) > 1 or sum(1 for t in tgs if within(t, tr[cands[0]])) > 1:
+            c.ambiguous.append(label)
+            for k in cands:
+                used[k] = True
+            continue
+        best = cands[0]
         used[best] = True
         rr = r[best]
         reasons = []
@@ -165,6 +179,20 @@ def compare(godot_rows: list[dict], raw_rows: list[dict]) -> Comparison:
     return c
 
 
+def merge(parts: list[Comparison]) -> Comparison:
+    """把多次测试（多对文件）的结果合并成一份。"""
+    out = Comparison()
+    for p in parts:
+        out.compared += p.compared
+        out.godot_unpaired += p.godot_unpaired
+        out.raw_extra += p.raw_extra
+        out.invalid += p.invalid
+        out.no_motion += p.no_motion
+        out.ambiguous += p.ambiguous
+        out.legacy = out.legacy or p.legacy
+    return out
+
+
 def _groups(c: Comparison) -> dict[str, list[RoundResult]]:
     groups: dict[str, list[RoundResult]] = {}
     for x in c.compared:
@@ -180,6 +208,9 @@ def _ratio(results: list[RoundResult]) -> str:
 
 
 def verdict(c: Comparison) -> str:
+    if c.ambiguous:
+        return ("**无法判定**：有记录在 0.5 秒内出现多次右键，无法确定配对（见上文）。"
+                "请避免连续快速按右键，并重测这些条件。")
     if c.godot_unpaired:
         return ("**无法判定**：有 Godot 记录在基准中找不到对应行（见上文）。"
                 "请确认对照工具全程开着，然后重测。")
@@ -206,7 +237,7 @@ def verdict(c: Comparison) -> str:
 def render(c: Comparison) -> str:
     lines = ["## 逐条比对结果（自动生成）", ""]
     if c.legacy:
-        lines.append("- 注意：记录是旧格式（没有毫秒时间戳），按出现顺序逐条配对，并用秒级时间核对（每对相差 ≤2 秒）")
+        lines.append("- 注意：有记录是旧格式（没有毫秒时间戳），这部分按出现顺序逐条配对，并用秒级时间核对（每对相差 ≤2 秒）")
     lines.append(f"- 参与比较的记录：**{len(c.compared)}**，完全一致：**{sum(1 for x in c.compared if x.exact)}**")
     if c.invalid:
         lines.append(f"- 作废记录：{len(c.invalid)}（不参与比较）")
@@ -214,6 +245,8 @@ def render(c: Comparison) -> str:
         lines.append(f"- 没有移动的记录：{len(c.no_motion)}（不参与比较）")
     if c.raw_extra:
         lines.append(f"- 基准多出的记录：{c.raw_extra}（在其他窗口里的点击等，正常）")
+    if c.ambiguous:
+        lines.append(f"- ⚠ 配对有歧义（0.5 秒内有多次右键）：{c.ambiguous}")
     if c.godot_unpaired:
         lines.append(f"- ⚠ Godot 有、基准找不到对应行：{c.godot_unpaired}")
     lines.append("")
@@ -246,12 +279,14 @@ def render(c: Comparison) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="P0-4 逐条比对")
-    p.add_argument("godot_csv")
-    p.add_argument("raw_csv")
+    p.add_argument("csv", nargs="+", help="成对给出：Godot 的 CSV、基准的 CSV；多次测试可以给多对，合并成一份报告")
     p.add_argument("--out", help="把结果写入这个 Markdown 文件（默认打印）")
     a = p.parse_args()
     try:
-        text = render(compare(read_csv(a.godot_csv), read_csv(a.raw_csv)))
+        if len(a.csv) % 2:
+            raise FormatError("CSV 必须成对给出：Godot 的、基准的")
+        parts = [compare(read_csv(a.csv[i]), read_csv(a.csv[i + 1]), run=i // 2 + 1) for i in range(0, len(a.csv), 2)]
+        text = render(merge(parts))
     except FormatError as e:
         sys.exit(str(e))
     if a.out:
