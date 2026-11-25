@@ -81,6 +81,15 @@ class CounterTest(unittest.TestCase):
         r = self.rows()[0]
         self.assertEqual((r["valid"], r["absolute_events"], r["read_errors"], r["raw_x"]), ("0", "1", "1", "0"))
 
+    def test_read_error_is_sticky_across_rounds(self) -> None:
+        self.c.on_mouse(packet(buttons=MID))
+        self.c.on_read_error()  # 这个丢失的包可能就是一次中键
+        self.c.on_mouse(packet(buttons=MID))
+        self.c.on_mouse(packet(dx=1))
+        self.c.on_mouse(packet(buttons=RIGHT))
+        r = self.rows()[0]
+        self.assertEqual((r["valid"], r["sync_lost"], r["read_errors"]), ("0", "1", "0"))
+
     def test_new_round_clears_flags(self) -> None:
         self.c.on_mouse(packet(dx=5, buttons=MID))
         self.c.on_mouse(packet(buttons=MID))

@@ -129,6 +129,9 @@ class Counter:
         self.csv_path = csv_path
         self.round_index = 0
         self.devices: set[int] = set()
+        # 读取失败的包可能正好是一次点击，之后的轮号与 Godot 可能已错位，
+        # 所以这个标记一旦置位就不再清除，必须重启两边程序
+        self.sync_lost = False
         self._reset()
 
     def _reset(self) -> None:
@@ -142,6 +145,7 @@ class Counter:
 
     def on_read_error(self) -> None:
         self.read_errors += 1
+        self.sync_lost = True
 
     def on_mouse(self, raw: RAWINPUT_MOUSE) -> None:
         m = raw.mouse
@@ -170,7 +174,8 @@ class Counter:
             self.log()
 
     def valid(self) -> bool:
-        return self.absolute_events == 0 and self.read_errors == 0 and not self.boundary_motion
+        return (self.absolute_events == 0 and self.read_errors == 0
+                and not self.boundary_motion and not self.sync_lost)
 
     def log(self) -> None:
         is_new = not os.path.exists(self.csv_path)
@@ -179,12 +184,13 @@ class Counter:
             if is_new:
                 w.writerow([
                     "time", "round", "valid", "raw_x", "raw_y", "events",
-                    "absolute_events", "read_errors", "boundary_motion", "devices",
+                    "absolute_events", "read_errors", "boundary_motion", "sync_lost", "devices",
                 ])
             w.writerow([
                 datetime.datetime.now().isoformat(timespec="seconds"),
                 self.round_index, int(self.valid()), self.x, self.y, self.events,
-                self.absolute_events, self.read_errors, int(self.boundary_motion), len(self.devices),
+                self.absolute_events, self.read_errors, int(self.boundary_motion), int(self.sync_lost),
+                len(self.devices),
             ])
         flag = "" if self.valid() else "（作废：见 CSV 标记）"
         print(f"\n已记录第 {self.round_index} 轮{flag}：X={self.x} Y={self.y} 事件={self.events}")
@@ -197,6 +203,8 @@ class Counter:
             warn += f"  ⚠ 读取失败 {self.read_errors}"
         if self.boundary_motion:
             warn += "  ⚠ 点击时鼠标在动"
+        if self.sync_lost:
+            warn += "  ⚠ 曾读取失败，轮号可能已错位：请重启两边程序"
         return (f"\r第 {self.round_index} 轮  X={self.x:>8}  Y={self.y:>8}  "
                 f"事件={self.events:>6}  设备数={len(self.devices)}{warn}    ")
 
