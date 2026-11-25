@@ -4,21 +4,27 @@ extends Node3D
 ##    与独立的 Windows Raw Input 计数器（tools/rawinput_counter.py）逐轮对比；
 ## 2) 按规格公式驱动第一人称视角，四周每 10° 一根标柱，用来和 CS2 做 360° 对照。
 ##
-## 一轮的边界由鼠标按键决定，计数器工具会收到同一次点击，因此两边区间一致：
+## 一轮的边界只由鼠标按键决定，基准计数器会收到同一次点击：
 ##   鼠标中键 = 开始新一轮（两边清零）；鼠标右键 = 结束本轮并记录（两边各写一行 CSV）。
+## Godot 这边不会单方面开新轮。释放鼠标、窗口失焦、按 Z 回正视角，都只会把本轮标为「作废」，
+## 因为这些情况下基准仍在计数而 Godot 没有，或者 yaw 基准被改动。作废轮照常记录，但带标记。
 
 const LookMath = preload("res://look_math.gd")
 
-# spike 例外：暂定常量写在这里，正式工程移到 data/（见规格 4.2，均待测量）
-const PITCH_MIN_DEG: float = -89.0
-const PITCH_MAX_DEG: float = 89.0
-const BASE_HFOV_4X3_DEG: float = 90.0
+# 场景布置参数（不是手感参数）
 const PILLAR_RADIUS_M: float = 20.0
 const EYE_HEIGHT_M: float = 1.7
 const LOG_PATH: String = "user://spike_runs.csv"
 
 var dpi: float = 800.0
 var sensitivity: float = 1.0
+
+# 手感参数，来自 data/look_defaults.json
+var m_yaw_deg: float = NAN
+var m_pitch_deg: float = NAN
+var pitch_min_deg: float = NAN
+var pitch_max_deg: float = NAN
+var base_hfov_4x3_deg: float = NAN
 
 # 本轮计数：一律用标量 float（64 位）。Vector2 是 32 位，不能用来累计。
 var round_screen_x: float = 0.0
@@ -31,6 +37,7 @@ var round_mismatch_events: int = 0
 var round_max_abs_dx: float = 0.0
 var round_index: int = 0
 var round_yaw_start_deg: float = 0.0
+var round_invalid_reason: String = ""  # 空字符串 = 有效
 
 # 视角：yaw 不回绕，向右转为正；pitch 向上为正
 var yaw_deg: float = 0.0
@@ -45,6 +52,15 @@ var _last_log_line: String = "（尚未记录）"
 
 func _ready() -> void:
 	Input.use_accumulated_input = false
+	var d: Dictionary = LookMath.load_defaults()
+	if d.is_empty():
+		get_tree().quit(1)
+		return
+	m_yaw_deg = d["m_yaw_deg"]
+	m_pitch_deg = d["m_pitch_deg"]
+	pitch_min_deg = d["pitch_min_deg"]
+	pitch_max_deg = d["pitch_max_deg"]
+	base_hfov_4x3_deg = d["base_hfov_4x3_deg"]
 	_build_world()
 	_build_ui()
 	_set_captured(false)
@@ -81,8 +97,7 @@ func _input(event: InputEvent) -> void:
 
 	var next: PackedFloat64Array = LookMath.look_step(
 		yaw_deg, pitch_deg, scr_x, scr_y, sensitivity,
-		LookMath.M_YAW_DEFAULT_DEG, LookMath.M_PITCH_DEFAULT_DEG,
-		PITCH_MIN_DEG, PITCH_MAX_DEG
+		m_yaw_deg, m_pitch_deg, pitch_min_deg, pitch_max_deg
 	)
 	yaw_deg = next[0]
 	pitch_deg = next[1]
@@ -98,17 +113,28 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_captured(true)
 		KEY_ESCAPE:
 			_set_captured(false)
+			_invalidate_round("释放了鼠标")
 		KEY_Z:
 			yaw_deg = 0.0
 			pitch_deg = 0.0
 			_apply_camera()
-			_start_round()
+			_invalidate_round("中途回正了视角")
 		KEY_F:
 			var mode: DisplayServer.WindowMode = DisplayServer.window_get_mode()
 			if mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN:
 				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 			else:
 				DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_invalidate_round("窗口失去焦点")
+
+
+func _invalidate_round(reason: String) -> void:
+	if round_index > 0 and round_invalid_reason.is_empty():
+		round_invalid_reason = reason
 
 
 func _process(_delta_s: float) -> void:
@@ -124,8 +150,10 @@ func _process(_delta_s: float) -> void:
 		],
 		"鼠标：%s" % ("已锁定（Esc 释放）" if captured else "未锁定（按 C 锁定）"),
 		"",
-		"第 %d 轮   X：%.3f counts   Y：%.3f counts   （relative 路：X %.3f  Y %.3f）" % [
-			round_index, round_screen_x, round_screen_y, round_rel_x, round_rel_y,
+		"第 %d 轮%s   X：%.3f counts   Y：%.3f counts   （relative 路：X %.3f  Y %.3f）" % [
+			round_index,
+			"" if round_invalid_reason.is_empty() else "【已作废：%s，按中键重开】" % round_invalid_reason,
+			round_screen_x, round_screen_y, round_rel_x, round_rel_y,
 		],
 		"按 DPI %.0f 换算水平位移 %.3f cm   本轮 yaw 变化 %.4f°" % [
 			dpi, round_screen_x / dpi * LookMath.CM_PER_INCH, yaw_deg - round_yaw_start_deg,
@@ -136,10 +164,10 @@ func _process(_delta_s: float) -> void:
 		"",
 		"yaw（不回绕）%.4f° = %.5f 圈   pitch %.3f°   灵敏度 %.3f → %.3f cm/360°" % [
 			yaw_deg, yaw_deg / 360.0, pitch_deg, sensitivity,
-			LookMath.cm_per_360(dpi, sensitivity, LookMath.M_YAW_DEFAULT_DEG),
+			LookMath.cm_per_360(dpi, sensitivity, m_yaw_deg),
 		],
 		"",
-		"鼠标中键 开始新一轮 · 右键 结束并记录 · Z 视角回正 · F 全屏 · C 锁定 · Esc 释放",
+		"鼠标中键 开始新一轮 · 右键 结束并记录 · Z 视角回正（会作废本轮）· F 全屏 · C 锁定 · Esc 释放",
 		"上次记录：%s" % _last_log_line,
 		"记录文件：%s" % ProjectSettings.globalize_path(LOG_PATH),
 	]
@@ -162,6 +190,7 @@ func _start_round() -> void:
 	round_mismatch_events = 0
 	round_max_abs_dx = 0.0
 	round_yaw_start_deg = yaw_deg
+	round_invalid_reason = ""
 
 
 func _apply_camera() -> void:
@@ -176,11 +205,13 @@ func _log_round() -> void:
 		return
 	f.seek_end()
 	if is_new:
-		f.store_line("time,round,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale")
+		f.store_line("time,round,valid,invalid_reason,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale")
 	var size_px: Vector2i = get_viewport().get_visible_rect().size
 	var note: String = _note.text.replace(",", "，")
-	var line: String = "%s,%d,%s,%.0f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.0f,%.6f,%.9f,%d,%d,%d,%.4f" % [
-		Time.get_datetime_string_from_system(), round_index, note, dpi, sensitivity,
+	var line: String = "%s,%d,%d,%s,%s,%.0f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.0f,%.6f,%.9f,%d,%d,%d,%.4f" % [
+		Time.get_datetime_string_from_system(), round_index,
+		1 if round_invalid_reason.is_empty() else 0, round_invalid_reason.replace(",", "，"),
+		note, dpi, sensitivity,
 		round_screen_x, round_screen_y, round_rel_x, round_rel_y,
 		round_events, round_fractional_events, round_mismatch_events, round_max_abs_dx,
 		round_screen_x / dpi * LookMath.CM_PER_INCH, yaw_deg - round_yaw_start_deg,
@@ -188,7 +219,9 @@ func _log_round() -> void:
 	]
 	f.store_line(line)
 	f.close()
-	_last_log_line = "第 %d 轮 [%s] X=%.3f Y=%.3f" % [round_index, note, round_screen_x, round_screen_y]
+	_last_log_line = "第 %d 轮 [%s]%s X=%.3f Y=%.3f" % [
+		round_index, note, "" if round_invalid_reason.is_empty() else "（作废）", round_screen_x, round_screen_y,
+	]
 	print("已记录：", line)
 
 
@@ -246,7 +279,7 @@ func _build_world() -> void:
 
 	_camera = Camera3D.new()
 	_camera.keep_aspect = Camera3D.KEEP_HEIGHT
-	_camera.fov = LookMath.vfov_from_hfov(BASE_HFOV_4X3_DEG, 4.0 / 3.0)
+	_camera.fov = LookMath.vfov_from_hfov(base_hfov_4x3_deg, 4.0 / 3.0)
 	_camera.position = Vector3(0.0, EYE_HEIGHT_M, 0.0)
 	_camera.rotation_order = EULER_ORDER_YXZ
 	add_child(_camera)

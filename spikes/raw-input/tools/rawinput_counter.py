@@ -136,37 +136,67 @@ class Counter:
         self.y = 0
         self.events = 0
         self.absolute_events = 0
+        self.read_errors = 0
+        # 点击的同一个数据包里带有位移：Godot 那边的事件顺序未知，本轮边界不可靠
+        self.boundary_motion = False
+
+    def on_read_error(self) -> None:
+        self.read_errors += 1
 
     def on_mouse(self, raw: RAWINPUT_MOUSE) -> None:
         m = raw.mouse
         self.devices.add(int(raw.header.hDevice or 0))
-        if m.usFlags & MOUSE_MOVE_ABSOLUTE:
+        absolute = bool(m.usFlags & MOUSE_MOVE_ABSOLUTE)
+        moved = (not absolute) and (m.lLastX != 0 or m.lLastY != 0)
+        buttons = m.usButtonFlags
+
+        if buttons & RI_MOUSE_MIDDLE_BUTTON_DOWN:
+            self.round_index += 1
+            self._reset()
+            if moved:
+                self.boundary_motion = True
+            print(f"\n—— 第 {self.round_index} 轮开始 ——")
+
+        if absolute:
             self.absolute_events += 1
-        elif m.lLastX or m.lLastY:
+        elif moved:
             self.x += m.lLastX
             self.y += m.lLastY
             self.events += 1
-        if m.usButtonFlags & RI_MOUSE_MIDDLE_BUTTON_DOWN:
-            self.round_index += 1
-            self._reset()
-            print(f"\n—— 第 {self.round_index} 轮开始 ——")
-        if m.usButtonFlags & RI_MOUSE_RIGHT_BUTTON_DOWN:
+
+        if buttons & RI_MOUSE_RIGHT_BUTTON_DOWN:
+            if moved:
+                self.boundary_motion = True
             self.log()
+
+    def valid(self) -> bool:
+        return self.absolute_events == 0 and self.read_errors == 0 and not self.boundary_motion
 
     def log(self) -> None:
         is_new = not os.path.exists(self.csv_path)
         with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             if is_new:
-                w.writerow(["time", "round", "raw_x", "raw_y", "events", "absolute_events", "devices"])
+                w.writerow([
+                    "time", "round", "valid", "raw_x", "raw_y", "events",
+                    "absolute_events", "read_errors", "boundary_motion", "devices",
+                ])
             w.writerow([
                 datetime.datetime.now().isoformat(timespec="seconds"),
-                self.round_index, self.x, self.y, self.events, self.absolute_events, len(self.devices),
+                self.round_index, int(self.valid()), self.x, self.y, self.events,
+                self.absolute_events, self.read_errors, int(self.boundary_motion), len(self.devices),
             ])
-        print(f"\n已记录第 {self.round_index} 轮：X={self.x} Y={self.y} 事件={self.events}")
+        flag = "" if self.valid() else "（作废：见 CSV 标记）"
+        print(f"\n已记录第 {self.round_index} 轮{flag}：X={self.x} Y={self.y} 事件={self.events}")
 
     def status(self) -> str:
-        warn = f"  ⚠ 绝对坐标事件 {self.absolute_events}（数据不可用）" if self.absolute_events else ""
+        warn = ""
+        if self.absolute_events:
+            warn += f"  ⚠ 绝对坐标事件 {self.absolute_events}"
+        if self.read_errors:
+            warn += f"  ⚠ 读取失败 {self.read_errors}"
+        if self.boundary_motion:
+            warn += "  ⚠ 点击时鼠标在动"
         return (f"\r第 {self.round_index} 轮  X={self.x:>8}  Y={self.y:>8}  "
                 f"事件={self.events:>6}  设备数={len(self.devices)}{warn}    ")
 
@@ -185,13 +215,23 @@ def main() -> None:
         if msg == WM_INPUT:
             size = wintypes.UINT(0)
             header_size = ctypes.sizeof(RAWINPUTHEADER)
-            user32.GetRawInputData(lparam, RID_INPUT, None, ctypes.byref(size), header_size)
-            buf = ctypes.create_string_buffer(max(size.value, ctypes.sizeof(RAWINPUT_MOUSE)))
-            got = user32.GetRawInputData(lparam, RID_INPUT, buf, ctypes.byref(size), header_size)
-            if got != 0xFFFFFFFF:
-                raw = RAWINPUT_MOUSE.from_buffer(buf)
-                if raw.header.dwType == RIM_TYPEMOUSE:
-                    counter.on_mouse(raw)
+            # 第一次调用只查询大小，成功时返回 0
+            first = user32.GetRawInputData(lparam, RID_INPUT, None, ctypes.byref(size), header_size)
+            if first != 0 or size.value == 0:
+                counter.on_read_error()
+            else:
+                expected = size.value
+                buf = ctypes.create_string_buffer(max(expected, ctypes.sizeof(RAWINPUT_MOUSE)))
+                got = user32.GetRawInputData(lparam, RID_INPUT, buf, ctypes.byref(size), header_size)
+                if got != expected:
+                    counter.on_read_error()
+                else:
+                    raw = RAWINPUT_MOUSE.from_buffer(buf)
+                    if raw.header.dwType == RIM_TYPEMOUSE:
+                        if expected < ctypes.sizeof(RAWINPUT_MOUSE):
+                            counter.on_read_error()
+                        else:
+                            counter.on_mouse(raw)
         elif msg == WM_TIMER:
             sys.stdout.write(counter.status())
             sys.stdout.flush()

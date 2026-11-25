@@ -2,9 +2,18 @@
 
 要回答的问题：**Windows 下 Godot 4.7 在鼠标锁定模式（MOUSE_MODE_CAPTURED）收到的位移，是否与 Windows 原始鼠标计数（Raw Input）逐轮完全一致？** 一致就说明它不受系统指针速度和「提高指针精确度」影响，也不丢失、不取整。
 
-判断方法是**和独立基准对比**，不靠尺子：`tools/rawinput_counter.py` 直接向 Windows 注册 Raw Input，与 Godot 同时接收同一只鼠标的同一段移动。两边用同一次鼠标点击划分「轮」，所以统计区间完全相同。
+判断方法是**和独立基准对比**，不靠尺子：`tools/rawinput_counter.py` 直接向 Windows 注册 Raw Input，与 Godot 同时接收同一只鼠标的同一段移动。两边用同一次鼠标点击划分「轮」。**前提是点击时鼠标静止**：如果点击的同一个数据包里带有位移，Godot 那边的事件先后顺序未知，基准会把这一轮标为作废。
 
-这是一次性的验证工程。`look_math.gd` 和它的测试会在 v0.1 转正。spike 中暂时写死的常量（pitch 上下限、m_yaw/m_pitch 默认值）属于已登记的例外，正式工程会移到 `data/`。
+这是一次性的验证工程。`look_math.gd` 和它的测试会在 v0.1 转正。视角参数（m_yaw、m_pitch、pitch 上下限、基准 FOV）放在 `data/look_defaults.json`，不写在代码里。
+
+自动化测试：
+
+```powershell
+<Godot 控制台版 exe> --headless --path spikes/raw-input -s res://tests/test_look_math.gd
+```
+```powershell
+python -I -m unittest discover -s spikes/raw-input/tools -p "test_*.py"
+```
 
 ## 准备
 
@@ -20,9 +29,11 @@
 
 > **鼠标保持静止 → 按中键（两边同时清零，开始新一轮）→ 移动 → 停止移动 → 按右键（两边同时记录）**
 
-- 点击时鼠标不要动，避免点击前后的位移落在边界上
-- 两边的「轮号」应该一致。如果不一致，重启两个程序，从头开始
-- 每次改「备注」前先按 Esc 释放鼠标，改完按 C 重新锁定
+- 点击时鼠标不要动。如果动了，基准会把本轮标为作废（`boundary_motion=1`）
+- 两边的「轮号」应该一致。Godot 只在按中键时开新轮，不会单方面开新轮。如果轮号仍然对不上，重启两个程序，从头开始
+- 一轮进行中如果**释放鼠标、窗口失焦或按 Z 回正视角**，Godot 会把本轮标为作废，面板会提示；按中键重开即可
+- 改「备注」的顺序：先按右键记录完本轮 → Esc 释放 → 改备注 → C 锁定 → 中键开新轮
+- **只有两边都标为有效（`valid=1`）的轮次才参与比较**
 - 两边的记录文件：Godot 的路径显示在面板底部；基准的是本目录下的 `rawinput_runs.csv`
 
 ## 测试项

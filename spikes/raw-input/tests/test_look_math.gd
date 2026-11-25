@@ -21,6 +21,7 @@ func _init() -> void:
 	_test_look_step_pipeline()
 	_test_custom_gains()
 	_test_zero_and_negative_gain()
+	_test_defaults_file()
 	print("结果：通过 %d，失败 %d" % [_passed, _failed])
 	quit(1 if _failed > 0 else 0)
 
@@ -155,3 +156,15 @@ func _test_zero_and_negative_gain() -> void:
 	_truthy("DPI<0 返回 NAN", is_nan(LookMath.cm_per_360(-800.0, 1.0, M_DEG)))
 	_near("负增益 counts/360 取正值", LookMath.counts_per_360(-1.0, M_DEG), 16363.636363636364, 1e-8)
 	_near("负增益只改变方向", LookMath.delta_deg(100.0, -1.0, M_DEG), -2.2, 1e-10)
+
+
+func _test_defaults_file() -> void:
+	var d: Dictionary = LookMath.load_defaults()
+	_truthy("参数文件可读取且字段完整", not d.is_empty())
+	if d.is_empty():
+		return
+	_near("参数文件 m_yaw_deg", d["m_yaw_deg"], 0.022, 0.0)
+	_near("参数文件 m_pitch_deg", d["m_pitch_deg"], 0.022, 0.0)
+	_near("参数文件 pitch_min_deg", d["pitch_min_deg"], -89.0, 0.0)
+	_near("参数文件 pitch_max_deg", d["pitch_max_deg"], 89.0, 0.0)
+	_near("参数文件 base_hfov_4x3_deg", d["base_hfov_4x3_deg"], 90.0, 0.0)

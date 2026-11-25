@@ -3,13 +3,25 @@ extends RefCounted
 ## 单位：角度一律为度（_deg），计数为原始鼠标 count。
 ## 注意：GDScript 的标量 float 是 64 位，但 Vector2/Vector3 是 32 位，
 ## 所以需要 float64 精度的累计量一律用标量 float 或 PackedFloat64Array。
-##
-## spike 例外：下面两个增益常量是 CS2 的已知默认值（待测量确认），
-## 正式工程中会移到 data/ 配置文件（PROJECT_RULES「手感常量不写死」）。
+## 手感参数（m_yaw、pitch 上下限等）不写在代码里，由 data/look_defaults.json 提供。
 
-const M_YAW_DEFAULT_DEG: float = 0.022
-const M_PITCH_DEFAULT_DEG: float = 0.022
-const CM_PER_INCH: float = 2.54
+const CM_PER_INCH: float = 2.54  # 物理单位换算，不是手感参数
+const DEFAULTS_PATH: String = "res://data/look_defaults.json"
+
+
+## 读取视角参数文件；缺字段或读取失败时返回空字典并报错。
+static func load_defaults(path: String = DEFAULTS_PATH) -> Dictionary:
+	var text: String = FileAccess.get_file_as_string(path)
+	var parsed: Variant = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("无法读取视角参数：%s" % path)
+		return {}
+	var d: Dictionary = parsed
+	for key: String in ["m_yaw_deg", "m_pitch_deg", "pitch_min_deg", "pitch_max_deg", "base_hfov_4x3_deg"]:
+		if not d.has(key):
+			push_error("视角参数缺少字段：%s" % key)
+			return {}
+	return d
 
 
 ## 一次输入事件产生的角度增量（°）。不乘帧间隔。
