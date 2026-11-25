@@ -33,10 +33,15 @@ Issue（人类或 Claude 创建，打角色标签 owner:claude / owner:gpt / own
 
 ## 调度方式
 
-- 由 Claude Code 作为调度方，通过命令行调用其他两家：
-  - GPT：`codex exec "<任务说明>"`（只读审查可加只读沙箱参数）
-  - Gemini：`gemini -p "<任务说明>"`
-- 人类也可以直接在各自的 CLI 里接手某个 Issue。
+有两种方式，按任务选择：
+
+| 方式 | 怎么做 | 适用 |
+|---|---|---|
+| **A. Claude 调度** | Claude 在命令行调用 `codex exec`：审查用 `--sandbox read-only`；写作用 `--sandbox workspace-write -C <worktree>`，此时 Codex 不联网、不提交，由 Claude 提交（记为 `Agent: gpt`）并推送 | GPT 的审查和实现任务（默认） |
+| **B. 人类启动** | 人类在对应工具里打开项目，粘贴 `docs/prompts/` 下的提示词，agent 自己按协议认领、提交、提 PR | Gemini（经 Antigravity，见 `docs/prompts/gemini-kickoff.md`）；人类想直接观察时的 Codex（见 `docs/prompts/codex-kickoff.md`） |
+
+- Gemini CLI 的个人 Google 账号登录已被停用（2026-11），所以 Gemini 目前只能用方式 B。
+- **并行：** 只要各自在不同的 `task/<号>` worktree 里，多个 agent 可以同时工作。人类也可以另开 Codex 会话认领独立的 Issue 与 Claude 并行。分配原则：同一时间同一组文件只有一个写入者；有依赖关系的任务不并行。
 
 ## 每版本复盘模板（docs/retro/vX.Y.md）
 

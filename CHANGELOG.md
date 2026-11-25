@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 ### 新增
+- Gemini（Antigravity）启动提示词模板 `docs/prompts/gemini-kickoff.md`
+
+### 变更
+- 工作流：调度分为方式 A（Claude 调度 codex exec）与方式 B（人类在工具中启动），记录并行原则
+- 共享文件夹协议第 5 节：人类确认主文件夹的改动属于预期后，agent 可保持原样继续工作
+
+### 新增
 - 原创练习地图设计文档 `docs/map/00-design.md`（M0）：中心大厅 + 6 个训练分区、尺度规范、数据驱动灰盒约定、原创性自查清单
 
 ### 变更
