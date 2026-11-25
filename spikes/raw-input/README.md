@@ -67,7 +67,13 @@ python -I -m unittest discover -s spikes/raw-input/tools -p "test_*.py"
 
 ## 报告
 
-测完后把两边的 CSV 和结论整理进 `REPORT.md`（模板如下），提交到 Issue #3。比对两个 CSV 时，我（Claude）可以写脚本按轮号自动对齐。
+测完后先用脚本按轮号自动比对两个 CSV，生成报告的数据部分：
+
+```powershell
+python -I tools/compare_runs.py <Godot 的 spike_runs.csv> rawinput_runs.csv --out REPORT-data.md
+```
+
+脚本只比较两边都有效的轮次，按「备注」分组统计，列出所有不一致的轮次，并给出初步判定（通过 / 待复核 / 不通过 / 无法判定）。再把结果和下面模板中需要人工填写的部分（设备信息、T5）整理进 `REPORT.md`，提交到 Issue #3。
 
 ```markdown
 # P0-4 报告
