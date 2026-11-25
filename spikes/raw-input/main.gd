@@ -17,6 +17,7 @@ const EYE_HEIGHT_M: float = 1.7
 const DEFAULT_LOG_PATH: String = "user://spike_runs.csv"
 # 可用启动参数覆盖：godot --path <工程目录> -- --log=<CSV 完整路径>
 var log_path: String = DEFAULT_LOG_PATH
+var _log_warning: String = ""
 
 var dpi: float = 800.0
 var sensitivity: float = 1.0
@@ -45,6 +46,18 @@ var round_invalid_reason: String = ""  # 空字符串 = 有效
 var yaw_deg: float = 0.0
 var pitch_deg: float = 0.0
 
+# 引导测试（data/test_plan.json）：屏幕顶部告诉测试人现在该做什么，自动填写备注、计数、换步骤
+const TEST_PLAN_PATH: String = "res://data/test_plan.json"
+var _plan_steps: Array = []
+var _plan_done_text: String = ""
+var guide_step: int = 0
+var guide_rounds_ok: int = 0
+var guide_prepared: bool = true
+var guide_message: String = ""
+var round_active: bool = false      # 按过中键、还没按右键
+var round_step: int = -1            # 本轮是在哪一步开始的
+var _banner: Label
+
 var _camera: Camera3D
 var _info: Label
 var _settings: HBoxContainer
@@ -56,8 +69,21 @@ func _ready() -> void:
 	Input.use_accumulated_input = false
 	for arg: String in OS.get_cmdline_user_args():
 		if arg.begins_with("--log="):
-			log_path = arg.trim_prefix("--log=")
-			DirAccess.make_dir_recursive_absolute(log_path.get_base_dir())
+			var requested: String = arg.trim_prefix("--log=").strip_edges()
+			if requested.is_empty():
+				_log_warning = "--log 参数为空，改用默认位置"
+				continue
+			var err: Error = DirAccess.make_dir_recursive_absolute(requested.get_base_dir())
+			# 实测 Godot 4.7.2：路径被同名文件占用时也返回 OK，所以再确认目录确实存在
+			if err == OK and not DirAccess.dir_exists_absolute(requested.get_base_dir()):
+				err = ERR_CANT_CREATE
+			if err != OK:
+				_log_warning = "无法创建目录 %s（%s），改用默认位置" % [requested.get_base_dir(), error_string(err)]
+				continue
+			log_path = requested
+			_log_warning = ""
+	if not _log_warning.is_empty():
+		push_warning(_log_warning)
 	var d: Dictionary = LookMath.load_defaults()
 	if d.is_empty():
 		get_tree().quit(1)
@@ -70,6 +96,74 @@ func _ready() -> void:
 	_build_world()
 	_build_ui()
 	_set_captured(false)
+	_load_plan()
+	_enter_step(0)
+
+
+func _load_plan() -> void:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(TEST_PLAN_PATH))
+	if typeof(parsed) == TYPE_DICTIONARY and (parsed as Dictionary).has("steps"):
+		_plan_steps = (parsed as Dictionary)["steps"]
+		_plan_done_text = (parsed as Dictionary).get("done", "全部完成")
+	else:
+		push_warning("无法读取测试步骤 %s，只能手动测试" % TEST_PLAN_PATH)
+
+
+func _enter_step(i: int) -> void:
+	guide_step = i
+	guide_rounds_ok = 0
+	if i >= _plan_steps.size():
+		_set_captured(false)
+		return
+	var step: Dictionary = _plan_steps[i]
+	_note.text = step["id"]
+	guide_prepared = str(step.get("prepare", "")).is_empty()
+	if not guide_prepared:
+		_set_captured(false)  # 让测试人去改 Windows 设置
+
+
+func _guide_after_log(written: bool) -> void:
+	if _plan_steps.is_empty() or guide_step >= _plan_steps.size():
+		return
+	if not written:
+		guide_message = "⚠ 这一轮没写进文件（见左下角），请重来：先按中键"
+	elif not round_active:
+		guide_message = "⚠ 这一轮已经记录过了。先按中键开始新的一轮"
+	elif round_step != guide_step:
+		guide_message = "⚠ 这一轮是在上一步开始的，不计入。请按中键重新开始"
+	elif not round_invalid_reason.is_empty():
+		guide_message = "⚠ 这一轮作废了（%s），不计入。请按中键重来" % round_invalid_reason
+	elif round_events == 0:
+		guide_message = "⚠ 这一轮没有检测到移动，不计入。按中键后记得移动鼠标"
+	else:
+		guide_rounds_ok += 1
+		guide_message = "✓ 第 %d 轮已记录" % guide_rounds_ok
+		var need: int = int((_plan_steps[guide_step] as Dictionary)["rounds"])
+		if guide_rounds_ok >= need:
+			guide_message = "✓ 这一步完成！"
+			_enter_step(guide_step + 1)
+	round_active = false
+
+
+func _banner_text() -> String:
+	if _plan_steps.is_empty():
+		return ""
+	if guide_step >= _plan_steps.size():
+		return "🎉 " + _plan_done_text
+	var step: Dictionary = _plan_steps[guide_step]
+	var head: String = "第 %d / %d 步：%s　　已完成 %d / %d 轮" % [
+		guide_step + 1, _plan_steps.size(), step["id"], guide_rounds_ok, int(step["rounds"]),
+	]
+	if not guide_prepared:
+		return head + "\n【先做准备】" + str(step["prepare"])
+	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+		return head + "\n按 C 锁定鼠标，开始这一步"
+	var now: String
+	if round_active and round_step == guide_step:
+		now = "本轮进行中：%s，然后停下，按【右键】记录" % step["do"]
+	else:
+		now = "① 鼠标别动，按【中键】　② %s　③ 停下，按【右键】" % step["do"]
+	return head + "\n" + now + ("\n" + guide_message if not guide_message.is_empty() else "")
 
 
 func _input(event: InputEvent) -> void:
@@ -79,8 +173,12 @@ func _input(event: InputEvent) -> void:
 	if button != null and button.pressed:
 		if button.button_index == MOUSE_BUTTON_MIDDLE:
 			_start_round()
+			round_active = true
+			round_step = guide_step
+			guide_message = ""
 		elif button.button_index == MOUSE_BUTTON_RIGHT:
-			_log_round()
+			# 不管引导是否计入，都要写一行：基准计数器每次右键都会写，两边必须一一对应
+			_guide_after_log(_log_round())
 		return
 	var motion: InputEventMouseMotion = event as InputEventMouseMotion
 	if motion == null:
@@ -117,6 +215,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	match key.keycode:
 		KEY_C:
 			_set_captured(true)
+			guide_prepared = true
+		KEY_N:
+			# 跳过当前步骤（例如某项暂时做不了）
+			guide_message = "已跳过上一步"
+			_enter_step(guide_step + 1)
 		KEY_ESCAPE:
 			_set_captured(false)
 			_invalidate_round("释放了鼠标")
@@ -175,10 +278,15 @@ func _process(_delta_s: float) -> void:
 		"",
 		"鼠标中键 开始新一轮 · 右键 结束并记录 · Z 视角回正（会作废本轮）· F 全屏 · C 锁定 · Esc 释放",
 		"上次记录：%s" % _last_log_line,
-		"记录文件：%s" % ProjectSettings.globalize_path(log_path),
+		"记录文件：%s%s" % [
+			ProjectSettings.globalize_path(log_path),
+			"" if _log_warning.is_empty() else "   ⚠ %s" % _log_warning,
+		],
 	]
 	_info.text = "\n".join(lines)
 	_settings.visible = not captured
+	_banner.text = _banner_text()
+	_banner.get_parent().visible = not _banner.text.is_empty()
 
 
 func _set_captured(captured: bool) -> void:
@@ -203,13 +311,14 @@ func _apply_camera() -> void:
 	_camera.rotation = Vector3(deg_to_rad(pitch_deg), -deg_to_rad(yaw_deg), 0.0)
 
 
-func _log_round() -> void:
+## 写一行记录；成功返回 true。
+func _log_round() -> bool:
 	var is_new: bool = not FileAccess.file_exists(log_path)
 	var f: FileAccess = FileAccess.open(log_path, FileAccess.WRITE if is_new else FileAccess.READ_WRITE)
 	if f == null:
 		push_error("无法写入 %s" % log_path)
 		_last_log_line = "⚠ 写入失败：%s" % log_path
-		return
+		return false
 	f.seek_end()
 	if is_new:
 		f.store_line("time,round,valid,invalid_reason,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale")
@@ -226,11 +335,18 @@ func _log_round() -> void:
 		DisplayServer.window_get_mode(), size_px.x, size_px.y, get_window().content_scale_factor,
 	]
 	f.store_line(line)
+	f.flush()
+	var write_err: Error = f.get_error()
 	f.close()
+	if write_err != OK:
+		push_error("写入 %s 时出错：%s" % [log_path, error_string(write_err)])
+		_last_log_line = "⚠ 第 %d 轮写入出错（%s），请检查磁盘后重测" % [round_index, error_string(write_err)]
+		return false
 	_last_log_line = "第 %d 轮 [%s]%s X=%.3f Y=%.3f" % [
 		round_index, note, "" if round_invalid_reason.is_empty() else "（作废）", round_screen_x, round_screen_y,
 	]
 	print("已记录：", line)
+	return true
 
 
 func _build_world() -> void:
@@ -298,6 +414,23 @@ func _build_world() -> void:
 func _build_ui() -> void:
 	var layer: CanvasLayer = CanvasLayer.new()
 	add_child(layer)
+
+	# 顶部引导横幅：大字，告诉测试人现在做什么
+	var banner_panel: PanelContainer = PanelContainer.new()
+	layer.add_child(banner_panel)
+	banner_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE, Control.PRESET_MODE_MINSIZE, 12)
+	var banner_style: StyleBoxFlat = StyleBoxFlat.new()
+	banner_style.bg_color = Color(0.05, 0.06, 0.08, 0.85)
+	banner_style.border_color = Color(0.2, 1.0, 0.3, 0.8)
+	banner_style.border_width_bottom = 3
+	banner_style.set_content_margin_all(14.0)
+	banner_style.set_corner_radius_all(6)
+	banner_panel.add_theme_stylebox_override("panel", banner_style)
+	_banner = Label.new()
+	_banner.add_theme_font_size_override("font_size", 24)
+	_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner_panel.add_child(_banner)
 
 	# 面板放左下角，不遮挡地平线上的标柱
 	var panel: PanelContainer = PanelContainer.new()

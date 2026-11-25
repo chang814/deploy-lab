@@ -15,6 +15,7 @@
 - 原创练习地图设计文档 `docs/map/00-design.md`（M0）：中心大厅 + 6 个训练分区、尺度规范、数据驱动灰盒约定、原创性自查清单
 - Gemini（Antigravity）启动提示词模板 `docs/prompts/gemini-kickoff.md`
 - P0-4 比对脚本 `spikes/raw-input/tools/compare_runs.py`：按（会话, 轮号, 第几次记录）对齐 Godot 与 Raw Input 基准，生成报告数据与初步判定（15 条测试）
+- P0-4 引导测试模式：屏幕顶部逐步提示操作，自动填写备注、计数并切换步骤（`data/test_plan.json`）；`--log` 启动参数指定记录路径
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
