@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 ### 新增
+- 原创练习地图分区中文显示名 `data/map/zone_names.zh-CN.json`（Z0–Z6 共 7 个训练分区）
 - 原创练习地图设计文档 `docs/map/00-design.md`（M0）：中心大厅 + 6 个训练分区、尺度规范、数据驱动灰盒约定、原创性自查清单
 
 ### 变更
