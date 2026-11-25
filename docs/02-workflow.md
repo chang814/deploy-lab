@@ -9,7 +9,7 @@
 | 产品负责人 / 验收人 | 人类 | 拍板、优先级、**主观手感测试**、账号与发布操作 | — |
 | 技术负责人 / 集成 | Claude（Claude Code） | 架构、视角与动画手感调校、视觉审美、任务拆分、合并前把关 | 单独决定产品方向 |
 | 严谨实现 / 审查 | GPT（Codex CLI） | 数学与换算、输入管线、状态机、单元测试、**交叉代码审查** | 美术方向 |
-| 文案 / 调研 | Gemini（Gemini CLI） | README、更新日志、Release 说明、游戏内文本、长文档调研总结 | 核心代码 |
+| 文案 / 调研 | Gemini（Antigravity） | README、更新日志、Release 说明、游戏内文本、长文档调研总结 | 核心代码 |
 
 ## 核心原则
 
@@ -37,8 +37,14 @@ Issue（人类或 Claude 创建，打角色标签 owner:claude / owner:gpt / own
 
 | 方式 | 怎么做 | 适用 |
 |---|---|---|
-| **A. Claude 调度** | Claude 在命令行调用 `codex exec`：审查用 `--sandbox read-only`；写作用 `--sandbox workspace-write -C <worktree>`，此时 Codex 不联网、不提交，由 Claude 提交（记为 `Agent: gpt`）并推送 | GPT 的审查和实现任务（默认） |
+| **A. Claude 调度** | Claude 在命令行调用 `codex exec`：审查用 `--sandbox read-only`；写作用 `--sandbox workspace-write -C <worktree>`，由沙箱参数限制 Codex 只能写该 worktree，提示词中也要求它不联网、不提交。交接规则见下文 | GPT 的审查和实现任务（默认） |
 | **B. 人类启动** | 人类在对应工具里打开项目，粘贴 `docs/prompts/` 下的提示词，agent 自己按协议认领、提交、提 PR | Gemini（经 Antigravity，见 `docs/prompts/gemini-kickoff.md`）；人类想直接观察时的 Codex（见 `docs/prompts/codex-kickoff.md`） |
+
+**方式 A 的交接规则（Codex 写作时）：**
+1. 由 Claude 创建 worktree 并在 Issue 下留言「认领：gpt（由 claude 用 codex exec 调度），worktree …」。这个 worktree 只属于这一次调度
+2. `codex exec` 是同步运行的：Codex 进程运行期间，Claude 不读写、不暂存这个 worktree
+3. Codex 进程退出后，Claude 才检查改动、提交（记为 `Agent: gpt (dispatched by claude via codex exec)`）、推送、提 PR，并把 Codex 的汇报贴进 PR
+4. 审查改为由 Claude 进行；需要修改时，再调度一次 Codex 在同一个 worktree 中修改，重复 2–3
 
 - Gemini CLI 的个人 Google 账号登录已被停用（2026-11），所以 Gemini 目前只能用方式 B。
 - **并行：** 只要各自在不同的 `task/<号>` worktree 里，多个 agent 可以同时工作。人类也可以另开 Codex 会话认领独立的 Issue 与 Claude 并行。分配原则：同一时间同一组文件只有一个写入者；有依赖关系的任务不并行。

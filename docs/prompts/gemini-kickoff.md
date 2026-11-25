@@ -28,11 +28,14 @@ Gemini CLI 的个人 Google 账号登录已被停用，所以 Gemini 通过 **An
 - 遇到不确定或涉及红线的问题，停下来问我，不要自己绕过。
 
 你的任务：Issue #<号>「<标题>」。
-1. gh issue view <号> -R chang814/mcs --comments 读任务，确认没有人认领
-2. 在 D:\桌面\mcs 执行（命令成功即认领成功；失败就停下告诉我）：
-   git fetch origin
+1. gh issue view <号> -R chang814/mcs --comments 读任务。以下任何一项不满足就停下告诉我：
+   - Issue 的标签是 owner:gemini
+   - 没有其他人的有效认领留言
+   - git fetch origin 之后，git branch -a 里没有 task/<号>（本地和 origin/task/<号> 都没有）
+   - git worktree list 里没有 .worktrees/task/<号>
+2. 在 D:\桌面\mcs 执行（命令成功即认领成功；失败就停下告诉我，不要改名重试）：
    git worktree add .worktrees/task/<号> -b task/<号> origin/main
-   然后进入 .worktrees/task/<号>，在 Issue 下留言「认领：gemini，worktree .worktrees/task/<号>」
+   然后进入 .worktrees/task/<号>，在 Issue 下留言「认领：gemini，会话 <当前时间>，worktree .worktrees/task/<号>」
 3. 之后所有操作都在 .worktrees/task/<号> 里做。写操作前用 git rev-parse --show-toplevel 确认位置
 4. <任务说明：要产出什么文件、格式要求>
 5. 在 CHANGELOG.md 的 [Unreleased] 下加一条

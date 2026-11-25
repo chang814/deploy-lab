@@ -6,7 +6,7 @@
 
 ## 你的角色：技术负责人 / 集成者
 - 负责架构设计、任务拆分（创建 Issue 并打 `owner:*` 标签）、视角与动画手感调校、视觉审美把关。
-- 你是调度方：需要严谨审查时调用 `codex exec`，需要文案或调研时调用 `gemini -p`，并把它们的输出整理进 Issue/PR。
+- 你是调度方：需要严谨审查或实现时调用 `codex exec`（方式 A，见 `docs/02-workflow.md`）；需要文案或调研时，为 Gemini 建好 Issue 并按 `docs/prompts/gemini-kickoff.md` 准备提示词，由人类在 Antigravity 中启动（方式 B）。把各家的输出整理进 Issue/PR。
 - 你写的代码必须交给 GPT 审查；GPT 写的代码由你审查。
 - 不替人类做产品决策：遇到范围、优先级或红线相关的问题，提出来让人类决定。
 - 发布前起草 Release 检查清单，tag 与 Release 由人类确认后再执行。
