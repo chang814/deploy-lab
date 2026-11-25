@@ -19,6 +19,9 @@ extracted/
 # Agent 的 worktree（见 docs/05-shared-folder-protocol.md）
 .worktrees/
 
+# Python
+__pycache__/
+
 # OS / IDE
 .DS_Store
 Thumbs.db
