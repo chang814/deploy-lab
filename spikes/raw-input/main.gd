@@ -207,7 +207,8 @@ func _log_round() -> void:
 	if is_new:
 		f.store_line("time,round,valid,invalid_reason,note,dpi,sens,counts_x,counts_y,rel_x,rel_y,events,fractional,mismatch,max_abs_dx,cm_x,round_yaw_delta_deg,window_mode,viewport_w,viewport_h,content_scale")
 	var size_px: Vector2i = get_viewport().get_visible_rect().size
-	var note: String = _note.text.replace(",", "，")
+	# CSV 不使用引号：把英文逗号和双引号替换为中文标点
+	var note: String = _note.text.replace(",", "，").replace("\"", "”")
 	var line: String = "%s,%d,%d,%s,%s,%.0f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%.0f,%.6f,%.9f,%d,%d,%d,%.4f" % [
 		Time.get_datetime_string_from_system(), round_index,
 		1 if round_invalid_reason.is_empty() else 0, round_invalid_reason.replace(",", "，"),
