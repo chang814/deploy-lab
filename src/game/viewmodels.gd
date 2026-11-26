@@ -13,17 +13,33 @@ const GLOVE: Color = Color(0.17, 0.18, 0.15)       # 战术手套
 const SLEEVE: Color = Color(0.27, 0.3, 0.24)       # 袖子
 
 
-## 手 + 前臂：hand_pos 为手掌中心，前臂从手腕向「下后方」伸出画面（arm_dir 为前臂方向的欧拉角，度）。
-static func _arm(parent: Node3D, hand_pos: Vector3, hand_size: Vector3, arm_rot_deg: Vector3) -> void:
+## 手 + 前臂：hand_pos 为手掌中心，前臂从手腕向「下后方」伸出画面（arm_rot_deg 为前臂方向的欧拉角，度）。
+## 返回整只手臂的节点（原点在手掌中心），换弹时可以整体移动。
+static func _arm(parent: Node3D, hand_pos: Vector3, hand_size: Vector3, arm_rot_deg: Vector3, node_name: String = "") -> Node3D:
 	var glove: StandardMaterial3D = _mat(GLOVE, 0.0, 0.85)
 	var sleeve: StandardMaterial3D = _mat(SLEEVE, 0.0, 0.9)
-	_box(parent, hand_size, hand_pos, glove)
+	var group: Node3D = Node3D.new()
+	if not node_name.is_empty():
+		group.name = node_name
+	group.position = hand_pos
+	parent.add_child(group)
+	_box(group, hand_size, Vector3.ZERO, glove)
 	var arm: Node3D = Node3D.new()
-	arm.position = hand_pos
 	arm.rotation_degrees = arm_rot_deg
-	parent.add_child(arm)
+	group.add_child(arm)
 	_box(arm, Vector3(0.05, 0.05, 0.09), Vector3(0, 0, 0.07), glove)       # 手腕 / 护腕
 	_box(arm, Vector3(0.07, 0.07, 0.4), Vector3(0, 0, 0.31), sleeve)      # 前臂（袖子）
+	return group
+
+
+## 可单独移动的部件组（弹匣、枪栓等）：原点在 pos，子部件用相对坐标。
+static func _part(parent: Node3D, node_name: String, pos: Vector3) -> Node3D:
+	var g: Node3D = Node3D.new()
+	g.name = node_name
+	g.position = pos
+	g.set_meta("rest_position", pos)
+	parent.add_child(g)
+	return g
 
 
 static func _mat(c: Color, metallic: float = 0.6, rough: float = 0.45) -> StandardMaterial3D:
@@ -93,7 +109,8 @@ static func build(id: String) -> Node3D:
 			var bakelite: StandardMaterial3D = _mat(BAKELITE, 0.0, 0.6)
 			_box(root, Vector3(0.046, 0.058, 0.30), Vector3(0, 0.028, -0.10), metal)             # 机匣
 			_box(root, Vector3(0.042, 0.02, 0.27), Vector3(0, 0.066, -0.09), dark)               # 防尘盖
-			_box(root, Vector3(0.012, 0.016, 0.03), Vector3(0.026, 0.04, -0.13), dark)           # 拉机柄
+			var bolt: Node3D = _part(root, "Bolt", Vector3(0.026, 0.04, -0.13))
+			_box(bolt, Vector3(0.012, 0.016, 0.03), Vector3.ZERO, dark)                          # 拉机柄
 			_box(root, Vector3(0.034, 0.026, 0.045), Vector3(0, 0.072, -0.27), metal)            # 表尺座
 			_box(root, Vector3(0.052, 0.046, 0.17), Vector3(0, 0.026, -0.335), wood)             # 下护木
 			_box(root, Vector3(0.038, 0.026, 0.14), Vector3(0, 0.066, -0.33), wood)              # 上护木
@@ -102,21 +119,26 @@ static func build(id: String) -> Node3D:
 			_cyl(root, 0.0105, 0.29, Vector3(0, 0.036, -0.56), dark)                             # 枪管
 			_box(root, Vector3(0.012, 0.05, 0.02), Vector3(0, 0.07, -0.675), dark)               # 前准星座
 			_cyl(root, 0.014, 0.05, Vector3(0, 0.036, -0.725), dark)                             # 斜切枪口
-			_box(root, Vector3(0.036, 0.10, 0.065), Vector3(0, -0.045, -0.19), dark, Vector3(8, 0, 0))     # 弹匣上段
-			_box(root, Vector3(0.034, 0.10, 0.06), Vector3(0, -0.125, -0.225), dark, Vector3(30, 0, 0))    # 弹匣下段（向前弯）
+			var mag: Node3D = _part(root, "Mag", Vector3(0, -0.005, -0.19))
+			_box(mag, Vector3(0.036, 0.10, 0.065), Vector3(0, -0.04, 0.0), dark, Vector3(8, 0, 0))         # 弹匣上段
+			_box(mag, Vector3(0.034, 0.10, 0.06), Vector3(0, -0.12, -0.035), dark, Vector3(30, 0, 0))      # 弹匣下段（向前弯）
 			_box(root, Vector3(0.008, 0.008, 0.07), Vector3(0, -0.012, -0.06), dark)             # 扳机护圈
 			_box(root, Vector3(0.03, 0.09, 0.038), Vector3(0, -0.045, 0.0), bakelite, Vector3(-18, 0, 0))  # 握把
 			_box(root, Vector3(0.04, 0.062, 0.22), Vector3(0, -0.012, 0.15), wood, Vector3(-7, 0, 0))       # 枪托（向后下倾）
 			_muzzle(root, Vector3(0, 0.036, -0.755))
 			_arm(root, Vector3(0.004, -0.045, 0.01), Vector3(0.05, 0.075, 0.065), Vector3(28, 8, 0))     # 右手握把
-			_arm(root, Vector3(-0.004, -0.012, -0.33), Vector3(0.06, 0.05, 0.08), Vector3(22, -38, 0))  # 左手托护木
+			_arm(root, Vector3(-0.004, -0.012, -0.33), Vector3(0.06, 0.05, 0.08), Vector3(22, -38, 0), "LeftArm").set_meta("rest_position", Vector3(-0.004, -0.012, -0.33))  # 左手托护木
 		"pistol":
-			_box(root, Vector3(0.035, 0.045, 0.19), Vector3(0, 0.04, -0.07), metal)          # 套筒
+			var slide: Node3D = _part(root, "Slide", Vector3(0, 0.04, -0.07))
+			_box(slide, Vector3(0.035, 0.045, 0.19), Vector3.ZERO, metal)                    # 套筒
+			var pmag: Node3D = _part(root, "Mag", Vector3(0, -0.05, 0.0))
+			_box(pmag, Vector3(0.026, 0.1, 0.035), Vector3.ZERO, dark, Vector3(14, 0, 0))     # 弹匣（藏在握把里，底板露出）
+			_box(pmag, Vector3(0.032, 0.012, 0.045), Vector3(0.0, -0.056, 0.014), metal)      # 弹匣底板
 			_box(root, Vector3(0.032, 0.03, 0.15), Vector3(0, 0.005, -0.05), dark)           # 枪身
 			_box(root, Vector3(0.03, 0.11, 0.045), Vector3(0, -0.05, 0.0), dark, Vector3(14, 0, 0))  # 握把
 			_muzzle(root, Vector3(0, 0.04, -0.17))
 			_arm(root, Vector3(0.002, -0.045, 0.005), Vector3(0.05, 0.075, 0.06), Vector3(26, 6, 0))     # 右手握把
-			_arm(root, Vector3(-0.03, -0.06, 0.02), Vector3(0.045, 0.06, 0.06), Vector3(24, -30, 0))     # 左手托底
+			_arm(root, Vector3(-0.03, -0.06, 0.02), Vector3(0.045, 0.06, 0.06), Vector3(24, -30, 0), "LeftArm").set_meta("rest_position", Vector3(-0.03, -0.06, 0.02))     # 左手托底
 		"knife":
 			# 战术直刀（原创造型）：用 2D 轮廓挤出成形。轮廓坐标 (x = 沿刀身向前, y = 向上)，单位米；
 			# 刀刃在下（-Y）、刀背在上；刃口带弧度上挑到刀尖，刀背前段斜切（clip point）
