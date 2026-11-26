@@ -45,6 +45,11 @@ var _alt_trigger: bool = false
 var _alt_press_queued: bool = false
 var _stab_left_s: float = 0.0
 var _inspect_left_s: float = 0.0
+## 命中标记剩余显示时间（准星处的 X，crosshair.gd 读取）
+var hit_marker_left_s: float = 0.0
+var _players: Array[AudioStreamPlayer] = []
+var _next_player: int = 0
+var _last_reload_p: float = -1.0
 
 
 func _ready() -> void:
@@ -85,7 +90,23 @@ func setup(c: WeaponConfig) -> void:
 	_flash_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_flash_mesh.visible = false
 	add_child(_flash_mesh)
+	for i: int in 8:
+		var ap: AudioStreamPlayer = AudioStreamPlayer.new()
+		add_child(ap)
+		_players.append(ap)
 	_show(state.current)
+
+
+## 播放一个合成音效（轮流使用 8 个播放器，可以叠在一起）。
+func play_sfx(kind: String, volume_db: float = 0.0, pitch_jitter: float = 0.04) -> void:
+	if _players.is_empty() or not is_inside_tree():
+		return
+	var ap: AudioStreamPlayer = _players[_next_player]
+	_next_player = (_next_player + 1) % _players.size()
+	ap.stream = Sfx.get_stream(kind)
+	ap.volume_db = volume_db + linear_to_db(maxf(cfg.viewmodel["sfx_gain"], 1e-4))
+	ap.pitch_scale = 1.0 + randf_range(-pitch_jitter, pitch_jitter)
+	ap.play()
 
 
 func _active() -> bool:
@@ -194,12 +215,19 @@ func _process(dt_s: float) -> void:
 		var k: float = pow(1.0 - t, 3.0)
 		anim_pos = Vector3(0.03 * k, -cfg.viewmodel["draw_drop_m"] * k, 0.0)
 		anim_rot = Vector3(-35.0 * k, 0.0, 20.0 * k)
-	elif state.state == WeaponState.State.RELOADING:
+	var parts: Dictionary = {}
+	if state.state == WeaponState.State.RELOADING:
 		var reload_s: float = float(state.weapons[_shown]["reload_s"])
 		var p: float = clampf(1.0 - (state.reload_done_s - state.now_s) / maxf(reload_s, 1e-6), 0.0, 1.0)
-		var dip: float = sin(PI * p)
-		anim_pos = Vector3(0.0, -0.08 * dip, 0.0)
-		anim_rot = Vector3(-10.0 * dip, 0.0, 28.0 * dip)
+		var r: Dictionary = reload_pose(p, _shown)
+		anim_pos = r["gun"][0]
+		anim_rot = r["gun"][1]
+		parts = r
+		_reload_sounds(_last_reload_p, p, _shown)
+		_last_reload_p = p
+	else:
+		_last_reload_p = -1.0
+	_apply_parts(m, parts)
 
 	# 刀：轻击（左右交替的斜劈）、重击（蓄力后前刺）；检视（F）
 	var slash_rot: Vector3 = Vector3.ZERO
@@ -230,6 +258,7 @@ func _process(dt_s: float) -> void:
 	m.transform = Transform3D(base_basis * Basis.from_euler(offset_rot), base_pos + anim_pos + slash_pos + bob + Vector3(0.0, 0.0, _kick))
 	m.scale = Vector3.ONE * (KNIFE_SCALE if is_knife else VM_SCALE)
 
+	hit_marker_left_s = maxf(hit_marker_left_s - dt_s, 0.0)
 	_flash_left_s = maxf(_flash_left_s - dt_s, 0.0)
 	_flash_light.light_energy = 6.0 if _flash_left_s > 0.0 else 0.0
 	_flash_mesh.visible = _flash_left_s > 0.0
@@ -247,6 +276,81 @@ func _show(id: String) -> void:
 	_slash_left_s = 0.0
 	_stab_left_s = 0.0
 	_inspect_left_s = 0.0
+
+
+## 换弹动作（关键帧）。返回 {"gun": [位置, 旋转], "mag": 位置偏移, "arm": 位置偏移, "bolt": 位置偏移}。
+## 步枪：枪向右下倾斜 → 左手去拿弹匣、弹匣拔出掉落 → 左手带新弹匣上来插入 → 左手回护木 → 拉枪栓 → 复位。
+## 手枪：弹匣从握把下方掉出 → 新弹匣插入 → 套筒复位。
+static func reload_pose(p: float, id: String) -> Dictionary:
+	if id == "pistol":
+		var g: Array = keyframes(p, [
+			[0.0, Vector3.ZERO, Vector3.ZERO],
+			[0.15, Vector3(-0.02, 0.02, 0.0), Vector3(15.0, 10.0, 20.0)],
+			[0.8, Vector3(-0.02, 0.02, 0.0), Vector3(15.0, 10.0, 20.0)],
+			[1.0, Vector3.ZERO, Vector3.ZERO],
+		])
+		var mag: Vector3 = keyframes(p, [
+			[0.0, Vector3.ZERO, Vector3.ZERO], [0.18, Vector3.ZERO, Vector3.ZERO],
+			[0.35, Vector3(0.0, -0.35, 0.05), Vector3.ZERO], [0.45, Vector3(0.0, -0.18, 0.0), Vector3.ZERO],
+			[0.62, Vector3.ZERO, Vector3.ZERO], [1.0, Vector3.ZERO, Vector3.ZERO]])[0]
+		var arm: Vector3 = keyframes(p, [
+			[0.0, Vector3.ZERO, Vector3.ZERO], [0.3, Vector3(0.0, -0.12, 0.04), Vector3.ZERO],
+			[0.45, Vector3(0.0, -0.13, 0.0), Vector3.ZERO], [0.62, Vector3(0.0, -0.02, 0.0), Vector3.ZERO],
+			[0.8, Vector3.ZERO, Vector3.ZERO], [1.0, Vector3.ZERO, Vector3.ZERO]])[0]
+		var slide: Vector3 = keyframes(p, [
+			[0.0, Vector3.ZERO, Vector3.ZERO], [0.68, Vector3.ZERO, Vector3.ZERO],
+			[0.74, Vector3(0.0, 0.0, 0.035), Vector3.ZERO], [0.8, Vector3.ZERO, Vector3.ZERO],
+			[1.0, Vector3.ZERO, Vector3.ZERO]])[0]
+		return {"gun": g, "mag": mag, "arm": arm, "bolt": slide}
+	var gun: Array = keyframes(p, [
+		[0.0, Vector3.ZERO, Vector3.ZERO],
+		[0.12, Vector3(-0.03, 0.03, 0.02), Vector3(10.0, 8.0, 30.0)],
+		[0.62, Vector3(-0.03, 0.03, 0.02), Vector3(12.0, 8.0, 32.0)],
+		[0.7, Vector3(0.0, 0.02, 0.02), Vector3(6.0, -6.0, -12.0)],
+		[0.86, Vector3(0.0, 0.02, 0.02), Vector3(6.0, -6.0, -12.0)],
+		[1.0, Vector3.ZERO, Vector3.ZERO],
+	])
+	var mag2: Vector3 = keyframes(p, [
+		[0.0, Vector3.ZERO, Vector3.ZERO], [0.16, Vector3.ZERO, Vector3.ZERO],
+		[0.22, Vector3(0.0, -0.04, 0.03), Vector3.ZERO],
+		[0.34, Vector3(0.0, -0.45, 0.1), Vector3.ZERO],
+		[0.36, Vector3(-0.05, -0.4, 0.15), Vector3.ZERO],
+		[0.5, Vector3(0.0, -0.06, 0.02), Vector3.ZERO],
+		[0.56, Vector3.ZERO, Vector3.ZERO],
+		[1.0, Vector3.ZERO, Vector3.ZERO]])[0]
+	var arm2: Vector3 = keyframes(p, [
+		[0.0, Vector3.ZERO, Vector3.ZERO],
+		[0.14, Vector3(0.0, -0.02, 0.13), Vector3.ZERO],
+		[0.22, Vector3(0.0, -0.06, 0.16), Vector3.ZERO],
+		[0.34, Vector3(-0.05, -0.38, 0.22), Vector3.ZERO],
+		[0.5, Vector3(0.0, -0.07, 0.16), Vector3.ZERO],
+		[0.56, Vector3(0.0, -0.02, 0.14), Vector3.ZERO],
+		[0.66, Vector3.ZERO, Vector3.ZERO],
+		[1.0, Vector3.ZERO, Vector3.ZERO]])[0]
+	var bolt2: Vector3 = keyframes(p, [
+		[0.0, Vector3.ZERO, Vector3.ZERO], [0.72, Vector3.ZERO, Vector3.ZERO],
+		[0.78, Vector3(0.0, 0.0, 0.07), Vector3.ZERO],
+		[0.82, Vector3.ZERO, Vector3.ZERO],
+		[1.0, Vector3.ZERO, Vector3.ZERO]])[0]
+	return {"gun": gun, "mag": mag2, "arm": arm2, "bolt": bolt2}
+
+
+## 把换弹动作的部件偏移应用到模型（不在换弹时全部回到原位）。
+func _apply_parts(m: Node3D, parts: Dictionary) -> void:
+	for pair: Array in [["Mag", "mag"], ["LeftArm", "arm"], ["Bolt", "bolt"], ["Slide", "bolt"]]:
+		var n: Node3D = m.get_node_or_null(String(pair[0])) as Node3D
+		if n != null and n.has_meta("rest_position"):
+			n.position = (n.get_meta("rest_position") as Vector3) + (parts.get(pair[1], Vector3.ZERO) as Vector3)
+
+
+## 换弹过程中，进度越过这些点时播放卡扣声。
+func _reload_sounds(prev_p: float, p: float, id: String) -> void:
+	var cues: Array = [[0.2, "mag_out"], [0.55, "mag_in"], [0.77, "bolt"]]
+	if id == "pistol":
+		cues = [[0.22, "mag_out"], [0.6, "mag_in"], [0.74, "bolt"]]
+	for c: Array in cues:
+		if prev_p < float(c[0]) and p >= float(c[0]):
+			play_sfx(String(c[1]), -4.0)
 
 
 ## 检视（F）：就绪时开始；开火、切枪、换弹都会打断。
@@ -318,11 +422,14 @@ func _on_fire() -> void:
 	if is_knife and state.last_fire_alt:
 		_stab_left_s = cfg.viewmodel["stab_s"]
 		_slash_left_s = 0.0
+		play_sfx("swish", -2.0, 0.08)
 	elif is_knife:
 		_slash_left_s = cfg.viewmodel["slash_s"]
 		_stab_left_s = 0.0
 		_slash_dir = -_slash_dir
+		play_sfx("swish", -4.0, 0.12)
 	else:
+		play_sfx(state.current if state.current in ["rifle", "pistol"] else "rifle", -2.0, 0.03)
 		_kick = cfg.viewmodel["kick_m"]
 		_flash_left_s = cfg.viewmodel["flash_s"]
 	var cam: Camera3D = get_parent() as Camera3D
@@ -341,12 +448,44 @@ func _on_fire() -> void:
 	if hit.is_empty():
 		return
 	var collider: Object = hit["collider"]
+	var shot_dir: Vector3 = (to - from).normalized()
 	if collider != null and collider.has_method("on_hit"):
 		hits += 1
 		last_hit_target = (collider as Node).name
-		collider.call("on_hit")
+		collider.call("on_hit", shot_dir)
+		hit_marker_left_s = 0.15
+		play_sfx("hit", -6.0, 0.02)
+		_spawn_impact(hit["position"], hit["normal"], true)
 	elif not is_knife:
 		_spawn_mark(hit["position"], hit["normal"])
+		_spawn_impact(hit["position"], hit["normal"], false)
+
+
+## 命中特效：打在靶子上是火花（亮橙），打在墙和地面上是碎屑（灰褐）。一次性粒子，1 秒后删除。
+func _spawn_impact(pos: Vector3, normal: Vector3, on_target: bool) -> void:
+	var ps: CPUParticles3D = CPUParticles3D.new()
+	ps.one_shot = true
+	ps.explosiveness = 0.95
+	ps.amount = 10 if on_target else 14
+	ps.lifetime = 0.35 if on_target else 0.6
+	ps.direction = normal
+	ps.spread = 40.0
+	ps.initial_velocity_min = 2.0 if on_target else 1.0
+	ps.initial_velocity_max = 4.5 if on_target else 2.5
+	ps.gravity = Vector3(0, -9.8, 0)
+	ps.scale_amount_min = 0.6
+	ps.scale_amount_max = 1.2
+	var mesh: BoxMesh = BoxMesh.new()
+	mesh.size = Vector3.ONE * (0.012 if on_target else 0.02)
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED if on_target else BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	mat.albedo_color = Color(1.0, 0.7, 0.3) if on_target else Color(0.55, 0.5, 0.42)
+	mesh.material = mat
+	ps.mesh = mesh
+	get_tree().current_scene.add_child(ps)
+	ps.global_position = pos + normal * 0.01
+	ps.emitting = true
+	get_tree().create_timer(1.0).timeout.connect(ps.queue_free)
 
 
 ## 曳光：从枪口到命中点的一条细亮线，很快消失。

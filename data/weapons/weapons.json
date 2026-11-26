@@ -20,7 +20,8 @@
 		"draw_anim_fraction": 0.55,
 		"inspect_knife_s": 3.2,
 		"inspect_gun_s": 2.6,
-		"tracer_s": 0.035
+		"tracer_s": 0.035,
+		"sfx_gain": 0.6
 	},
 	"weapons": [
 		{
