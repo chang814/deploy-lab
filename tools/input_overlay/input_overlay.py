@@ -12,7 +12,6 @@
 """
 
 import argparse
-import csv
 import ctypes
 import datetime
 import os
@@ -23,7 +22,7 @@ import tkinter as tk
 from ctypes import wintypes
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from overlay_state import KEYS, OverlayState, decode_keyboard, decode_mouse  # noqa: E402
+from overlay_state import KEYS, LockedCsvLog, OverlayState, decode_keyboard, decode_mouse  # noqa: E402
 
 if sys.platform != "win32":
     sys.exit("只支持 Windows")
@@ -111,9 +110,9 @@ CSV_HEADER = ["time", "t_unix", "key", "event"]
 class RawInputThread(threading.Thread):
     """在独立线程里创建隐藏窗口、注册 Raw Input 并运行消息循环。"""
 
-    def __init__(self, state: OverlayState, lock: threading.Lock, writer) -> None:
+    def __init__(self, state: OverlayState, lock: threading.Lock, log: LockedCsvLog) -> None:
         super().__init__(daemon=True)
-        self.state, self.lock, self.writer = state, lock, writer
+        self.state, self.lock, self.log = state, lock, log
         self.thread_id = 0
         self.ready = threading.Event()
         self.error = ""
@@ -137,12 +136,15 @@ class RawInputThread(threading.Thread):
             changes = decode_mouse(raw.data.mouse.usButtonFlags)
         else:
             return
+        rows = []
         with self.lock:
             for name, down in changes:
                 if self.state.apply(name, down, t):
                     ev = self.state.log[-1][2]
-                    self.writer.writerow([datetime.datetime.fromtimestamp(t).isoformat(timespec="milliseconds"),
-                                          f"{t:.3f}", name, ev])
+                    rows.append([datetime.datetime.fromtimestamp(t).isoformat(timespec="milliseconds"),
+                                 f"{t:.3f}", name, ev])
+        for row in rows:
+            self.log.write_row(row)  # 记录器关闭后会安全地拒绝写入
 
     def run(self) -> None:
         self.thread_id = kernel32.GetCurrentThreadId()
@@ -178,12 +180,16 @@ class RawInputThread(threading.Thread):
         # 窗口必须由创建它的线程销毁
         user32.DestroyWindow(hwnd)
 
-    def stop(self, timeout_s: float = 2.0) -> None:
-        """通知消息循环退出，并等待线程结束；之后不会再有回调写 CSV。"""
-        if self.thread_id:
-            user32.PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0)
-        if self.is_alive():
+    def stop(self, timeout_s: float = 2.0) -> bool:
+        """通知消息循环退出并等待线程结束，返回线程是否已退出。
+
+        即使返回 False（线程没能及时退出），调用方关闭记录器也是安全的：之后的写入会被拒绝。
+        """
+        if self.thread_id and self.is_alive():
+            if not user32.PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0):
+                self.error = f"通知输入线程退出失败：{ctypes.get_last_error()}"
             self.join(timeout_s)
+        return not self.is_alive()
 
 
 def main() -> None:
@@ -193,22 +199,17 @@ def main() -> None:
 
     path = os.path.abspath(a.csv)
     is_new = not os.path.exists(path)
-    f = open(path, "a", newline="", encoding="utf-8")
-    writer = csv.writer(f)
-    if is_new:
-        writer.writerow(CSV_HEADER)
+    log = LockedCsvLog(open(path, "a", newline="", encoding="utf-8"), CSV_HEADER if is_new else None)
 
     state, lock = OverlayState(), threading.Lock()
-    raw = RawInputThread(state, lock, writer)
+    raw = RawInputThread(state, lock, log)
     raw.start()
 
     def shutdown() -> None:
-        """统一的退出路径：先停输入线程并等它结束，再刷新、关闭文件。"""
-        raw.stop()
-        with lock:
-            if not f.closed:
-                f.flush()
-                f.close()
+        """统一的退出路径：先停输入线程并等它结束，再关闭记录器（关闭后的写入会被安全拒绝）。"""
+        if not raw.stop():
+            print("警告：输入线程没有在 2 秒内退出；记录器已关闭，之后的输入不会再写入。", file=sys.stderr)
+        log.close()
 
     if not raw.ready.wait(3):
         shutdown()
@@ -259,8 +260,7 @@ def main() -> None:
         with lock:
             lit = {k: state.is_lit(k, now) for k in KEYS}
             counts = dict(state.presses)
-            if not f.closed:
-                f.flush()
+        log.flush()
         for k, (rect, text, count) in cells.items():
             canvas.itemconfig(rect, fill="#2bd94a" if lit[k] else "#2a2d35")
             canvas.itemconfig(text, fill="#000" if lit[k] else "#ddd")

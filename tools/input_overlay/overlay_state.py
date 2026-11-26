@@ -3,6 +3,8 @@
 把 Raw Input 的原始字段解码成「哪个键按下/松开」，并维护每个键当前是否点亮。
 """
 
+import csv
+import threading
 from dataclasses import dataclass, field
 
 # 显示顺序与标签
@@ -75,3 +77,40 @@ class OverlayState:
         if name == "滚轮":
             return now < self.wheel_until
         return self.pressed.get(name, False) or now < self.lit_until.get(name, 0.0)
+
+
+class LockedCsvLog:
+    """线程安全的 CSV 记录器。关闭之后的写入会被拒绝（返回 False），而不是抛异常。
+
+    这样即使输入线程在关闭时没能及时退出（例如卡在回调里），也不会写到已关闭的文件上。
+    """
+
+    def __init__(self, stream, header: list[str] | None = None) -> None:
+        self._stream = stream
+        self._writer = csv.writer(stream)
+        self.lock = threading.Lock()
+        self.closed = False
+        self.dropped = 0
+        if header:
+            self._writer.writerow(header)
+
+    def write_row(self, row: list) -> bool:
+        with self.lock:
+            if self.closed:
+                self.dropped += 1
+                return False
+            self._writer.writerow(row)
+            return True
+
+    def flush(self) -> None:
+        with self.lock:
+            if not self.closed:
+                self._stream.flush()
+
+    def close(self) -> None:
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = True
+            self._stream.flush()
+            self._stream.close()

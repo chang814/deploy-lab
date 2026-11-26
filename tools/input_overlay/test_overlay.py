@@ -76,6 +76,41 @@ class StateTest(unittest.TestCase):
         self.assertEqual(st.presses["1"], 4)
         self.assertEqual(st.presses["滚轮"], 1)
 
+    def test_log_rejects_writes_after_close(self):
+        # Codex 反例：输入线程卡住超过关闭等待时间，关闭后才恢复写入，不能抛异常
+        import io
+        buf = io.StringIO()
+        log = s.LockedCsvLog(buf, ["a", "b"])
+        self.assertTrue(log.write_row([1, 2]))
+        log.close()
+        self.assertTrue(buf.closed)
+        self.assertFalse(log.write_row([3, 4]))
+        self.assertEqual(log.dropped, 1)
+        log.flush()
+        log.close()  # 重复关闭也安全
+
+    def test_log_concurrent_close_never_raises(self):
+        import io
+        import threading
+        errors = []
+        log = s.LockedCsvLog(io.StringIO(), ["a"])
+        go = threading.Event()
+
+        def writer():
+            go.wait()
+            for i in range(2000):
+                try:
+                    log.write_row([i])
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+
+        th = threading.Thread(target=writer)
+        th.start()
+        go.set()
+        log.close()
+        th.join()
+        self.assertEqual(errors, [])
+
     def test_all_keys_have_cells(self):
         self.assertEqual(set(s.VKEY_NAMES.values()) | {"滚轮", "左键", "右键"}, set(s.KEYS))
 

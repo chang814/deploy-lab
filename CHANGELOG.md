@@ -19,7 +19,7 @@
 - P0-4 引导测试模式：屏幕顶部逐步提示操作，自动填写备注、计数并切换步骤（`data/test_plan.json`）；`--log`、`--plan` 启动参数；比对改为按毫秒时间戳配对，可合并多次测试
 - P0-4 实测报告 `spikes/raw-input/REPORT.md` 与原始数据：已测条件下 50 个有效轮次与 Raw Input 完全一致
 - P0-5 手感测量录制指引 `docs/measurement/p0-5-guide.md`（命令在控制台粘贴，不写 CS2 文件；显示器采集）
-- 输入显示层 `tools/input_overlay/`：置顶小窗口用 Raw Input 被动显示按键，使按键时刻出现在录像中（每次按下至少点亮 0.1 s、带按键计数；11 条测试）
+- 输入显示层 `tools/input_overlay/`：置顶小窗口用 Raw Input 被动显示按键，使按键时刻出现在录像中（每次按下至少点亮 0.1 s、带按键计数；关闭后的写入被安全拒绝；13 条测试）
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
