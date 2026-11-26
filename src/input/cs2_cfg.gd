@@ -51,16 +51,16 @@ static func find_cfg(steam: String) -> String:
 	if steam.is_empty():
 		return ""
 	var best: String = ""
-	var best_time: int = -1
+	var best_time_s: int = -1
 	var root: String = steam + "/userdata"
 	if not DirAccess.dir_exists_absolute(root):
 		return ""
 	for account: String in DirAccess.get_directories_at(root):
 		var p: String = "%s/%s/730/local/cfg/%s" % [root, account, CFG_NAME]
 		if FileAccess.file_exists(p):
-			var t: int = FileAccess.get_modified_time(p)
-			if t > best_time:
-				best_time = t
+			var modified_time_s: int = FileAccess.get_modified_time(p)
+			if modified_time_s > best_time_s:
+				best_time_s = modified_time_s
 				best = p
 	return best
 

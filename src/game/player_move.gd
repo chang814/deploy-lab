@@ -81,10 +81,16 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(dt_s: float) -> void:
 	if cfg == null:
 		return
+	velocity = physics_tick(velocity, is_on_floor(), dt_s)
+	# move_and_slide 需要物理世界，测试入口里没有；由试玩确认（PR #40 已知局限）
+	move_and_slide()
+
+
+## 一个物理帧的输入处理 + 速度计算（不含 move_and_slide）。起跳请求在这里被消费，只生效一次。
+func physics_tick(v: Vector3, on_floor: bool, dt_s: float) -> Vector3:
 	var active: bool = _look != null and _look.captured
 	var input: Vector2 = read_move_input() if active else Vector2.ZERO
 	var walk: bool = active and key_down.call(KEY_SHIFT)
 	var jump: bool = active and _jump_queued
 	_jump_queued = false
-	velocity = step(velocity, input, walk, jump, is_on_floor(), _look.yaw_deg, dt_s)
-	move_and_slide()
+	return step(v, input, walk, jump, on_floor, _look.yaw_deg if _look != null else 0.0, dt_s)
