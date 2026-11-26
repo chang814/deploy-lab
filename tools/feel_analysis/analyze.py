@@ -62,8 +62,6 @@ MIN_FLASH_FRAMES = 3        # 火光至少连续这么多帧（慢动作下真�
 AUDIO_SHOT_MIN = 2500       # 枪声的音量下限（实测：枪声 3800–14500，拔枪等声音不超过约 1000）
 AV_MIN_LAG, AV_MAX_LAG = 2, 7   # 枪声开始相对火光开始的延迟窗口（帧）；第一批 33 次实测 3–6（另有 1 次 2）
 AMMO_MIN = 200             # 弹药数字「变白」的像素数下限（第一批实测：开枪那一帧 440–680，其余 ≤ 42）
-AMMO_CHECK_AFTER = 5       # 核对「只变白一次」时，火光之后再看这么多帧（连射下一发在 0.1 倍速下至少相隔约 60 帧；
-                           # 第一批实测火光后 11 帧内没有第二次变白）
 AMMO_MAX_EARLY = 1         # 弹药数字最多比检测到的火光早这么多帧（第一批 25 次实测：23 次 0 帧、2 次 1 帧；不另加裕量）
 ALIGN_SEARCH_S = 0.15       # 对齐时，在 OBS 开录时刻附近搜索的范围
 ALIGN_STEP_S = 0.002
@@ -408,17 +406,21 @@ def find_flash(frames: list[Frame], start: int, end: int) -> tuple[int | None, s
 def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int) -> tuple[int | None, str]:
     """(start, end) 之间弹药数字第一次变白的帧，必须落在 [flash − AMMO_MAX_EARLY, flash] 内。
 
-    从切枪到火光之后 AMMO_CHECK_AFTER 帧之间必须**恰好一次**变白：多一次说明画面里有别的白色干扰，无法确定
-    哪一次是开枪，作废。已知局限：白色干扰与真实的数字变化无缝相连时只有一个上升沿，分不出来，靠人工逐帧抽查兜底。"""
+    弹药数字只会因开枪而变，每一发都有自己的火光。所以从切枪到「下一段火光开始前 AMMO_MAX_EARLY 帧」（没有下一段
+    火光就到窗口结束）之间必须**恰好一次**变白：多一次说明画面里有别的白色干扰，无法确定哪一次是开枪，作废；
+    连射的后续几发各有自己的火光，落在范围之外。已知局限：白色干扰与真实的数字变化无缝相连时只有一个上升沿，
+    分不出来，靠人工逐帧抽查兜底。"""
     if frames[start].ammo < 0:
         return None, "特征文件里没有弹药数字（ammo 列），请用新版 features.py 重新提取"
     on = [g for g in range(max(start + 1, 1), end)
           if frames[g].ammo >= AMMO_MIN and frames[g - 1].ammo < AMMO_MIN]
     if not on:
         return None, "火光前后没有看到弹药数字变化，无法确认开枪"
-    near = [x for x in on if x <= flash + AMMO_CHECK_AFTER]
+    later = flash_onsets(frames, flash, end)
+    limit = later[0] - AMMO_MAX_EARLY if later else end
+    near = [x for x in on if x < limit]
     if len(near) > 1:
-        return None, f"切枪到火光后 {AMMO_CHECK_AFTER} 帧之间弹药数字变白了 {len(near)} 次（第 {near[0]}、{near[1]} 帧），无法确定哪一次是开枪"
+        return None, f"切枪到下一发之前弹药数字变白了 {len(near)} 次（第 {near[0]}、{near[1]} 帧），无法确定哪一次是开枪"
     g = on[0]
     if not flash - AMMO_MAX_EARLY <= g <= flash:
         return None, f"弹药数字变化（第 {g} 帧）与火光（第 {flash} 帧）对不上"

@@ -527,6 +527,20 @@ class AnalyzeTest(Base):
         # 干扰与真实变化之间有间隔（297–298 变白，299 恢复，300 再变白）→ 两次变白，无法确定 → 作废
         self.invalid(self.run_cycle(extra_ammo=[297])[0], "无法确定")
 
+    def test_codex_pr34_r3_interference_far_before_late_change(self):
+        # PR #34 第 3 轮反例：299–300 白色干扰、301–305 暗、306 真实变化（不在任何固定窗口内）。
+        # 之后没有第二段火光 → 检查范围到窗口结束 → 两次变白 → 作废
+        self.invalid(self.run_cycle(ammo_shift=6, extra_ammo=[299])[0], "无法确定")
+
+    def test_spray_shots_with_own_flash_are_not_conflicts(self):
+        # 连射：第二发有自己的火光（360 开始）和弹药变化（360）→ 不算冲突，第一发仍有效
+        cs = self.run_cycle(flashes=((300, 310), (360, 370)))
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
+        # 第二发的弹药数字比它的火光早 1 帧（359）也不算冲突
+        cs = self.run_cycle(flashes=((300, 310),), extra_ammo=[359], extra_audio=[(364, 374)])
+        self.assertFalse(cs[0].valid)   # 没有第二段火光时，359 的变白就是冲突
+
     def test_codex_pr34_r2_interference_then_late_change(self):
         # PR #34 第 2 轮反例：299 帧变白（干扰）、300 帧暗、301 帧真实变化（比火光晚 1 帧）→ 两次变白 → 作废
         p = dict(self.BASE)
@@ -543,11 +557,10 @@ class AnalyzeTest(Base):
         self.assertTrue(cs[0].valid, cs[0].reason)
         self.assertEqual(cs[0].shot_frame, 299)
 
-    def test_white_after_flash_is_ignored(self):
-        # 火光之后再变白（连射的后续几发）不影响
-        cs = self.run_cycle(extra_ammo=[310])
-        self.assertTrue(cs[0].valid, cs[0].reason)
-        self.assertEqual(cs[0].shot_frame, 300)
+    def test_white_after_flash_without_own_flash_is_conflict(self):
+        # 火光之后再变白、但这次变白没有自己的火光（不是连射的下一发）→ 是干扰 → 作废
+        # （连射的下一发有自己的火光，见 test_spray_shots_with_own_flash_are_not_conflicts）
+        self.invalid(self.run_cycle(extra_ammo=[310])[0], "无法确定")
 
     def test_no_ammo_change_is_invalid(self):
         self.invalid(self.run_cycle(ammo_shift=500)[0], "没有看到弹药数字变化")
