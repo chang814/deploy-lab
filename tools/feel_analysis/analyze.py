@@ -64,7 +64,6 @@ MATCH_LATE_S = 0.07         # 对齐后，录像里的亮起 / 熄灭最多比�
 MIN_LIT_S = 0.10            # 与 tools/input_overlay/overlay_state.py 的 MIN_LIT_S 一致（测试会核对）
 WHEEL_LIT_S = 0.10          # 与 overlay_state.py 的 WHEEL_FLASH_S 一致
 MERGE_GAP_S = 0.025         # 两段点亮间隔不到这么久（约 1.5 帧）时，录像里可能分辨不出；以录像为准决定合不合并
-LOOKBACK_S = 10.0           # 推算第 0 帧的点亮状态时，往前看这么久的记录（任何按住超过它的键会被当成没按）
 MIN_PAIRS = 3
 MAX_FRAME_T_ERR_S = 0.0005  # 特征文件里第 i 帧的时间必须是 i / fps
 
@@ -207,7 +206,7 @@ def predicted_spans(presses: list[Press], key: str, end_t: float) -> list[tuple[
 def _classify(frames: list[Frame], fps: float, presses: list[Press]) -> tuple[int, int, list[str]]:
     """把「由记录推出的点亮时间段」与「录像里看到的点亮时间段」逐段对应，返回 (对上的段数, 矛盾数, 矛盾说明)。
 
-    presses 要包含录像开始前 LOOKBACK_S 内的事件（第 0 帧时是否亮着取决于它们）。
+    presses 要包含录像开始前的全部事件（第 0 帧时是否亮着取决于它们）。
     - 录像里的段：第 0 帧就亮着的一段（从第 0 帧开始），以及之后每次从灭到亮的一段
     - 推出的段开始于第 0 帧附近（≤ 1 帧 + MATCH_EARLY_S）时，可以对应「第 0 帧就亮着」的那段；否则对应
       开始时刻相差 [−MATCH_EARLY_S, +MATCH_LATE_S] 内的一次亮起
@@ -309,7 +308,7 @@ def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, 
     scored = []
     for j in range(-steps, steps + 1):
         off = j * ALIGN_STEP_S
-        ps = [Press(t - obs_start - off, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - off <= end_t]
+        ps = [Press(t - obs_start - off, k, e) for t, k, e in log if t - obs_start - off <= end_t]
         owned, bad, _ = _classify(frames, fps, ps)
         scored.append((bad, -owned, j))
     best = min(scored)[:2]
@@ -318,18 +317,18 @@ def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, 
         return Timeline(0.0, 0, problems=["有两种相距较远的对齐同样可信，无法确定录像起点"])
     offset = (js[0] + js[-1]) / 2 * ALIGN_STEP_S
     # 细调：让「亮起 − 按下」的中位数为 0；细调后矛盾不能变多
-    ps = [Press(t - obs_start - offset, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - offset <= end_t]
+    ps = [Press(t - obs_start - offset, k, e) for t, k, e in log if t - obs_start - offset <= end_t]
     _classify(frames, fps, ps)
     res = [frames[p.onset].t - p.t for p in ps if p.onset is not None]
     if res:
         fine = offset - statistics.median(res)
-        ps2 = [Press(t - obs_start - fine, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - fine <= end_t]
+        ps2 = [Press(t - obs_start - fine, k, e) for t, k, e in log if t - obs_start - fine <= end_t]
         if _classify(frames, fps, ps2)[:2] == (-best[1], best[0]):
             offset = fine
     tl = Timeline(offset, 0)
-    ext = [Press(t - obs_start - offset, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - offset <= end_t]
-    owned, bad, notes = _classify(frames, fps, ext)
-    tl.presses = [p for p in ext if p.t >= 0.0]
+    # 录像开始之前的事件也保留：第 0 帧时各键（包括左键）是否按着，由完整记录决定
+    tl.presses = [Press(t - obs_start - offset, k, e) for t, k, e in log if t - obs_start - offset <= end_t]
+    owned, bad, notes = _classify(frames, fps, tl.presses)
     tl.pairs = owned
     if owned < MIN_PAIRS:
         tl.problems.append(f"按键记录与录像对不上（配对 {owned} 个）")
@@ -394,7 +393,7 @@ def find_flash(frames: list[Frame], start: int, end: int) -> tuple[int | None, s
 def analyze(frames: list[Frame], fps: float, item: str, timescale: float,
             initial: tuple[str | None, str | None], tl: Timeline) -> list[Cycle]:
     trigger, want_from, want_to = ITEMS[item]
-    switches = [p for p in tl.presses if p.key in SWITCH_KEYS and is_press(p.event)]
+    switches = [p for p in tl.presses if p.key in SWITCH_KEYS and is_press(p.event) and p.t >= 0.0]
     states = track_weapons([p.key for p in switches], initial)
     cycles = []
     for idx, (p, (before, after)) in enumerate(zip(switches, states)):
@@ -404,6 +403,9 @@ def analyze(frames: list[Frame], fps: float, item: str, timescale: float,
         cycles.append(c)
         if tl.problems:
             c.reason = "整段录像作废：" + "；".join(tl.problems[:2])
+            continue
+        if p.onset == 0:
+            c.reason = "这次按下的格子在第 0 帧就亮着，看不到亮起的时刻，起点不可靠"
             continue
         if p.onset is None:
             c.reason = f"这次按下没有自己的格子亮起（{'与上一次亮起合并' if p.status == 'merged' else '漏显示'}），起点不可靠"
@@ -503,8 +505,8 @@ def main() -> None:
         name = path.replace("\\", "/").split("/")[-1]
         tl = build_timeline(frames, fps, log, parse_start(a.starts[idx]))
         tl.problems = timeline_problems(frames, fps) + tl.problems
-        merged = sum(1 for p in tl.presses if p.status == "merged")
-        missing = sum(1 for p in tl.presses if p.status == "missing")
+        merged = sum(1 for p in tl.presses if p.status == "merged" and p.t >= 0.0)
+        missing = sum(1 for p in tl.presses if p.status == "missing" and p.t >= 0.0)
         print(f"{name}：录像起点 = OBS 开录时刻 {tl.offset * 1000:+.0f} ms（{tl.pairs} 个配对）；"
               f"合并显示的按下 {merged} 次，漏显示 {missing} 次")
         for prob in tl.problems:

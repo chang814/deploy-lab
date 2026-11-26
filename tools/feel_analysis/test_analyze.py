@@ -305,6 +305,14 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual(an.build_timeline(make(600, p), FPS, log, OBS).problems, [])
         self.assertTrue(an.build_timeline(make(600, self.P), FPS, log, OBS).problems)
 
+    def test_codex_r6_long_hold_before_lookback_is_checked(self):
+        # 第 6 轮反例：R 在录像前 11 s 按下、第 20 帧松开，录像里 R 完全没亮 → 第 0 帧本应亮着，矛盾
+        log = log_from(self.P, [(-11.0, "R", "down"), (20 / FPS, "R", "up")])
+        self.assertTrue(an.build_timeline(make(600, self.P), FPS, log, OBS).problems)
+        # 录像正确显示 R [0,20) → 一致（不再误杀）
+        p = dict(self.P, R=[(0, 20)])
+        self.assertEqual(an.build_timeline(make(600, p), FPS, log, OBS).problems, [])
+
     def test_lit_period_end_must_match(self):
         # 记录说 1 按住到 300 帧，录像里 1 只亮到 106 帧 → 结束对不上
         p = dict(self.P)
@@ -382,6 +390,22 @@ class AnalyzeTest(Base):
         overlay = {"R": [(200, 210)]}
         cs = self.run_cycle(presses=overlay, log_extra=[(190 / FPS, "R", "down"), (191 / FPS, "R", "up")])
         self.invalid(cs[0], "整段录像作废")
+
+    def test_codex_r6_left_held_since_before_video(self):
+        # 第 6 轮反例：左键在录像前 0.5 s 按下、第 120 帧松开（切枪在第 100 帧，那时左键按着）→ 作废
+        overlay = {"L": [(0, 120), (150, 320)]}
+        log = {k: v for k, v in self.BASE.items() if k != "L"}
+        log["L"] = [(150, 320)]
+        cs = self.run_cycle(presses=overlay, log_presses=log,
+                            log_extra=[(-0.5 + DISPLAY_LAG, "L", "down"), (120 / FPS, "L", "up")])
+        self.invalid(cs[0], "左键已经按着")
+
+    def test_codex_r6_trigger_lit_at_frame_zero_is_invalid(self):
+        # 第 6 轮反例：切枪键 1 在第 0 帧就亮着（记录在第 2 帧按下），看不到亮起时刻 → 作废
+        overlay = {"3": [], "1": [(0, 8)]}
+        log = dict(self.BASE, **{"3": [], "1": [(2, 8)]})
+        cs = self.run_cycle(presses=overlay, log_presses=log, initial=("knife", "ak"))
+        self.invalid(cs[0], "第 0 帧就亮着")
 
     def test_left_released_before_shot_is_invalid(self):
         cs = self.run_cycle(presses={"L": [(150, 200)]})
