@@ -2,8 +2,9 @@ class_name WeaponState
 extends RefCounted
 ## 切枪 / 开火 / 换弹状态机（纯逻辑，按 tick 推进；v0.2）。
 ##
-## 时间模型：模拟以固定 tick 运行（CS2 为 64 tick/s）。输入在两个 tick 之间到达，到下一个 tick 才被处理，
-## 因此「按键 → 生效」天然有 0–1 个 tick 的等待，这正是 P0-5 测到的切枪时长散布的来源。
+## 时间模型（临时模拟模型）：模拟以固定 tick 运行（CS2 为 64 tick/s）。输入在两个 tick 之间到达，到下一个
+## tick 才被处理，因此「按键 → 生效」有 0–1 个 tick 的等待。P0-5 第一批的切枪时长散布与这个模型吻合，
+## 但它仍是待 V 项（正常速度对照）验证的假设（docs/measurement/p0-5-batch1.md）。
 ## 切枪在处理它的那个 tick 开始拔出，经过 draw_s 后的第一个 tick 才能开火。
 ##
 ## 规则：
@@ -79,6 +80,11 @@ func request_wheel(direction: int) -> void:
 
 func request_reload() -> void:
 	_pending_reload = true
+
+
+## 两个 tick 之间扳机松开过（即使 tick 时又按下了）：半自动武器据此允许下一枪。
+func release_trigger() -> void:
+	_trigger_released = true
 
 
 func is_ready() -> bool:

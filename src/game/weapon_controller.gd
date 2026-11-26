@@ -7,10 +7,6 @@ extends Node3D
 
 const HIP_POS: Vector3 = Vector3(0.15, -0.15, -0.4)    # 模型在相机空间里的位置（表现参数，不是手感时长）
 const VM_SCALE: float = 0.62                           # 模型缩放
-const DRAW_DROP_M: float = 0.35                        # 拔出动画开始时模型在画面下方多远
-const KICK_M: float = 0.035                            # 开火时向后的位移
-const KICK_RECOVER_PER_S: float = 14.0
-const FLASH_S: float = 0.05
 
 @export var look_path: NodePath = ^"../.."
 
@@ -26,6 +22,9 @@ var _kick: float = 0.0
 var _flash_left_s: float = 0.0
 var _flash: OmniLight3D = null
 var _trigger: bool = false
+## 两个物理 tick 之间收到过「按下」/「松开」：保留边沿，避免快速点击丢失
+var _press_queued: bool = false
+var _release_seen: bool = false
 
 
 func _ready() -> void:
@@ -39,6 +38,9 @@ func _ready() -> void:
 func setup(c: WeaponConfig) -> void:
 	cfg = c
 	_look = get_node_or_null(look_path) as FpsLook
+	var physics_hz: int = int(ProjectSettings.get_setting("physics/common/physics_ticks_per_second"))
+	if physics_hz != int(c.tick_rate_hz):
+		push_warning("weapons.json 的 tick_rate_hz (%s) 与物理频率 (%d) 不一致，武器计时会失真" % [c.tick_rate_hz, physics_hz])
 	state.setup(c.weapons, c.tick_rate_hz, String(c.weapons[0]["id"]))
 	for w: Dictionary in c.weapons:
 		var m: Node3D = Viewmodels.build(String(w["id"]))
@@ -70,7 +72,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event
 		match mb.button_index:
-			MOUSE_BUTTON_LEFT: _trigger = mb.pressed
+			MOUSE_BUTTON_LEFT:
+				_trigger = mb.pressed
+				if mb.pressed:
+					_press_queued = true
+				else:
+					_release_seen = true
 			MOUSE_BUTTON_WHEEL_DOWN:
 				if mb.pressed:
 					state.request_wheel(1)
@@ -80,12 +87,24 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(_dt_s: float) -> void:
+	physics_step()
+
+
+## 一个物理 tick：把这段时间里的扳机边沿交给状态机，推进一个 tick。返回是否开火（测试可直接调用）。
+func physics_step() -> bool:
 	if cfg == null:
-		return
+		return false
 	if not _active():
 		_trigger = false
-	if state.tick(_trigger):
+		_press_queued = false
+	if _release_seen:
+		state.release_trigger()
+	var fired: bool = state.tick(_trigger or _press_queued)
+	_press_queued = false
+	_release_seen = false
+	if fired:
 		_on_fire()
+	return fired
 
 
 func _process(dt_s: float) -> void:
@@ -99,13 +118,13 @@ func _process(dt_s: float) -> void:
 	if state.state == WeaponState.State.DRAWING:
 		var draw_s: float = float(state.weapons[_shown]["draw_s"])
 		var t: float = clampf(1.0 - (state.ready_at_s - state.now_s) / maxf(draw_s, 1e-6), 0.0, 1.0)
-		drop = DRAW_DROP_M * pow(1.0 - t, 3.0)
+		drop = cfg.viewmodel["draw_drop_m"] * pow(1.0 - t, 3.0)
 	elif state.state == WeaponState.State.RELOADING:
-		drop = DRAW_DROP_M * 0.35
-	_kick = move_toward(_kick, 0.0, KICK_RECOVER_PER_S * KICK_M * dt_s)
+		drop = cfg.viewmodel["draw_drop_m"] * 0.35
+	_kick = move_toward(_kick, 0.0, cfg.viewmodel["kick_recover_mps"] * dt_s)
 	m.scale = Vector3.ONE * VM_SCALE
 	m.position = HIP_POS + Vector3(0, -drop, _kick)
-	m.rotation_degrees = Vector3(_kick * 120.0, 0, 0)
+	m.rotation_degrees = Vector3(_kick * cfg.viewmodel["kick_pitch_deg_per_m"], 0, 0)
 	_flash_left_s = maxf(_flash_left_s - dt_s, 0.0)
 	_flash.light_energy = 6.0 if _flash_left_s > 0.0 else 0.0
 
@@ -121,9 +140,9 @@ func _show(id: String) -> void:
 
 func _on_fire() -> void:
 	shots += 1
-	_kick = KICK_M
+	_kick = cfg.viewmodel["kick_m"]
 	if int(state.weapons[state.current]["magazine"]) > 0:
-		_flash_left_s = FLASH_S
+		_flash_left_s = cfg.viewmodel["flash_s"]
 	var cam: Camera3D = get_parent() as Camera3D
 	if cam == null or not is_inside_tree():
 		return

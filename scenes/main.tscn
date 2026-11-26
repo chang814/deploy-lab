@@ -144,7 +144,7 @@ shape = SubResource("target_shape")
 mesh = SubResource("target_mesh")
 
 [node name="Static26m" type="StaticBody3D" parent="Range"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, -18)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5, 0.8, -17)
 script = ExtResource("6_target")
 move_amplitude_m = 0
 move_speed_mps = 0

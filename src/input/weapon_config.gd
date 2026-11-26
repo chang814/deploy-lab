@@ -3,10 +3,13 @@ extends RefCounted
 ## 武器参数（来自 data/weapons/weapons.json）。
 
 const DEFAULT_PATH: String = "res://data/weapons/weapons.json"
+const VIEWMODEL_KEYS: PackedStringArray = ["draw_drop_m", "kick_m", "kick_recover_mps", "kick_pitch_deg_per_m", "flash_s"]
 const NUM_KEYS: PackedStringArray = ["slot", "draw_s", "fire_interval_s", "magazine", "reload_s", "range_m"]
 
 var tick_rate_hz: float = NAN
 var weapons: Array = []
+## 第一人称表现参数（见 data/weapons/weapons.json 的 viewmodel）
+var viewmodel: Dictionary = {}
 var error: String = "尚未加载"
 
 
@@ -61,6 +64,15 @@ static func from_json_text(text: String) -> WeaponConfig:
 		ids[wd["id"]] = true
 		slots[int(wd["slot"])] = true
 		c.weapons.append(wd)
+	if typeof(d.get("viewmodel")) != TYPE_DICTIONARY:
+		c.error = "缺少 viewmodel"
+		return c
+	for key: String in VIEWMODEL_KEYS:
+		var vm: Dictionary = d["viewmodel"]
+		if typeof(vm.get(key)) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(vm[key])) or float(vm[key]) < 0.0:
+			c.error = "viewmodel.%s 必须是有限的非负数" % key
+			return c
+		c.viewmodel[key] = float(vm[key])
 	c.tick_rate_hz = float(d["tick_rate_hz"])
 	c.error = ""
 	return c

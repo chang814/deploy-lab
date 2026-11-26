@@ -45,6 +45,8 @@ func _test_config() -> void:
 	bad = (c.weapons[0] as Dictionary).duplicate()
 	bad["automatic"] = "yes"
 	ok("automatic 不是布尔无效", not WeaponConfig.from_json_text(JSON.stringify({"tick_rate_hz": 64, "weapons": [bad]})).is_valid())
+	ok("缺 viewmodel 无效", not WeaponConfig.from_json_text(JSON.stringify({"tick_rate_hz": 64, "weapons": c.weapons})).is_valid())
+	ok("viewmodel 参数已读入", c.viewmodel.has("kick_m") and c.viewmodel["draw_drop_m"] > 0.0)
 
 
 func _test_draw_timing() -> void:
@@ -184,6 +186,50 @@ func _test_knife() -> void:
 	ok("刀不消耗弹药", s.ammo["knife"] == 0 and s.is_ready())
 
 
+func _click(wc: WeaponController, pressed: bool) -> void:
+	var mb: InputEventMouseButton = InputEventMouseButton.new()
+	mb.button_index = MOUSE_BUTTON_LEFT
+	mb.pressed = pressed
+	wc._unhandled_input(mb)
+
+
+func _test_controller_input(wc: WeaponController, root: Node) -> void:
+	var look: FpsLook = root.get_node("Player/Look") as FpsLook
+	look.captured = true
+	# 快速点击：两个 tick 之间按下又松开，下一个 tick 仍然开火
+	_click(wc, true)
+	_click(wc, false)
+	ok("tick 之间的快速点击不会丢", wc.physics_step())
+	# 手枪：开一枪后，在同一个 tick 间隔里松开再按下，状态机能看到松开 → 间隔到了就开下一枪
+	wc.state.request_slot(2)
+	for i: int in 70:
+		wc.physics_step()
+	_click(wc, true)
+	ok("手枪第一枪", wc.physics_step())
+	var fired_again: bool = false
+	for i: int in 20:
+		_click(wc, false)
+		_click(wc, true)
+		fired_again = fired_again or wc.physics_step()
+	ok("手枪快速连点（松开和按下在同一个 tick 间隔里）能继续开火", fired_again)
+	# 一直按住手枪不会连发：松开后按住 80 个 tick（1.25 s，射击间隔 0.15 s），只开一枪
+	_click(wc, false)
+	wc.physics_step()
+	_click(wc, true)
+	var held_fired: int = 0
+	for i: int in 80:
+		if wc.physics_step():
+			held_fired += 1
+	ok("手枪按住只开一枪，实际 %d" % held_fired, held_fired == 1)
+	# 暂停时不开火，且暂停前的按下不会留到恢复后
+	_click(wc, false)
+	look.captured = false
+	_click(wc, true)
+	ok("暂停时不开火", not wc.physics_step())
+	look.captured = true
+	ok("恢复后不会补开暂停时的那一下", not wc.physics_step())
+
+
 func _test_scene_wiring() -> void:
 	var root: Node = (load("res://scenes/main.tscn") as PackedScene).instantiate()
 	var wc: WeaponController = root.get_node_or_null("Player/Look/Camera3D/Weapons") as WeaponController
@@ -198,4 +244,5 @@ func _test_scene_wiring() -> void:
 		wc.setup(WeaponConfig.load_file())
 		ok("开局拿着步枪", wc.state.current == "rifle")
 		ok("三把武器都有模型", wc.get_child_count() >= 3)
+		_test_controller_input(wc, root)
 	root.free()
