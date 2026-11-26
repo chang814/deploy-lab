@@ -2,8 +2,10 @@
 
 每帧三类特征：
 1. 输入显示层（tools/input_overlay）每个按键格子是否点亮：取格子中心一小块的平均颜色，绿明显多于红即为点亮
-2. 枪口火光指标 hot：画面右下四分之一（缩小 4 倍后）中「接近白热的橙黄色」像素的个数
-3. 音频 audio：每帧时长内的音量（RMS），用来确认真的开了枪（拔枪时手套、枪身高光也会让 hot 变大）
+2. 枪口火光指标 flash：画面中部（去掉顶部小地图、输入显示层与底部 HUD，缩小 2 倍）中「高饱和橙色」像素的个数。
+   实测：开枪那一帧从 0 跳到几百到几千（Glock 约 650、AK 约 1800–2200），拔枪时手套与枪身的高光、Dust2 的沙色墙面都保持 0。
+   早先用「接近白热」的亮度判据，会被拔 Glock 时的高光误触发，Glock 开火时反而下降，已弃用
+3. 音频 audio：每帧时长内的音量（RMS），用来确认真的开了枪
 
 用法：
     python -I features.py <录像> <输出 CSV> [--overlay-x 49 --overlay-y 51 --cell-step 64.75]
@@ -27,8 +29,9 @@ DEFAULT_CELL_STEP = 64.75   # 相邻格子中心的间距
 DEFAULT_CELL_Y = 51         # 格子中心的 y
 PATCH = 8                   # 取格子中心 ±PATCH 像素的方块
 
-# 火光判定（右下四分之一，缩小 4 倍）
-FLASH_R_MIN, FLASH_G_MIN, FLASH_B_MAX, FLASH_RB_DIFF = 250, 200, 170, 90
+# 火光区域（相对画面宽高的比例，对应 1724x1080 下 x 300–1724、y 150–970）与高饱和橙色判据
+FLASH_REGION = (300 / 1724, 150 / 1080, 1.0, 970 / 1080)   # 左、上、右、下
+FLASH_R_MIN, FLASH_RB_DIFF_MIN, FLASH_G_MIN = 235, 150, 90
 
 
 def probe(video: str) -> tuple[int, int, float]:
@@ -73,18 +76,20 @@ def overlay_lit(video: str, x0: float, step: float, y: int) -> list[list[bool]]:
     return out
 
 
-def flash_hot(video: str, w: int, h: int) -> list[int]:
-    """每帧右下四分之一中「白热橙黄」像素的个数（区域先缩小 4 倍）。"""
-    cw, ch = w // 2, h // 2
-    sw, sh = cw // 4, ch // 4
-    out = []
-    for fr in _frames(video, f"crop={cw}:{ch}:{w - cw}:{h - ch},scale={sw}:{sh}:flags=area", sw, sh):
-        r = fr[:, :, 0].astype(np.int16)
-        g = fr[:, :, 1].astype(np.int16)
-        b = fr[:, :, 2].astype(np.int16)
-        mask = (r > FLASH_R_MIN) & (g > FLASH_G_MIN) & (b < FLASH_B_MAX) & (r - b > FLASH_RB_DIFF)
-        out.append(int(mask.sum()))
-    return out
+def saturated_orange(fr: np.ndarray) -> int:
+    """一帧中「高饱和橙色」像素的个数：红很高、红远大于蓝、且有一定绿色（排除纯红）。"""
+    r = fr[:, :, 0].astype(np.int16)
+    g = fr[:, :, 1].astype(np.int16)
+    b = fr[:, :, 2].astype(np.int16)
+    return int(((r >= FLASH_R_MIN) & (r - b >= FLASH_RB_DIFF_MIN) & (g >= FLASH_G_MIN)).sum())
+
+
+def flash_counts(video: str, w: int, h: int) -> list[int]:
+    """每帧火光区域（缩小 2 倍）中高饱和橙色像素的个数。"""
+    x0, y0 = int(w * FLASH_REGION[0]), int(h * FLASH_REGION[1])
+    cw, ch = int(w * FLASH_REGION[2]) - x0, int(h * FLASH_REGION[3]) - y0
+    sw, sh = cw // 2, ch // 2
+    return [saturated_orange(fr) for fr in _frames(video, f"crop={cw}:{ch}:{x0}:{y0},scale={sw}:{sh}:flags=area", sw, sh)]
 
 
 def audio_rms(video: str, fps: float, n_frames: int) -> list[float]:
@@ -117,16 +122,16 @@ def main() -> None:
 
     w, h, fps = probe(a.video)
     lit = overlay_lit(a.video, a.overlay_x, a.cell_step, a.overlay_y)
-    hot = flash_hot(a.video, w, h)
-    n = min(len(lit), len(hot))
+    flash = flash_counts(a.video, w, h)
+    n = min(len(lit), len(flash))
     if n == 0:
         sys.exit("没有读到任何帧")
     audio = audio_rms(a.video, fps, n)
     with open(a.out_csv, "w", newline="", encoding="utf-8") as f:
         wr = csv.writer(f)
-        wr.writerow(["frame", "t", "fps"] + [f"lit_{k}" for k in KEYS] + ["hot", "audio"])
+        wr.writerow(["frame", "t", "fps"] + [f"lit_{k}" for k in KEYS] + ["flash", "audio"])
         for i in range(n):
-            wr.writerow([i, f"{i / fps:.4f}", f"{fps:.4f}"] + [int(x) for x in lit[i]] + [hot[i], f"{audio[i]:.0f}"])
+            wr.writerow([i, f"{i / fps:.4f}", f"{fps:.4f}"] + [int(x) for x in lit[i]] + [flash[i], f"{audio[i]:.0f}"])
     print(f"已写入 {a.out_csv}：{n} 帧，{fps:g} fps")
 
 
