@@ -21,6 +21,7 @@
 - 决策记录 0002：v0.1 工程结构（仓库根目录即 Godot 工程）、依赖方向、测试入口与 CI
 - P0-5 手感测量录制指引 `docs/measurement/p0-5-guide.md`（命令在控制台粘贴，不写 CS2 文件；显示器采集）
 - 输入显示层 `tools/input_overlay/`：置顶小窗口用 Raw Input 被动显示按键，使按键时刻出现在录像中（每次按下至少点亮 0.1 s、带按键计数；关闭后的写入被安全拒绝；14 条测试）
+- v0.1 工程骨架：仓库根目录 Godot 工程、`src/core/look_math.gd`（从 spike 转正）、`src/input/look_config.gd`、`data/look/defaults.json`、测试入口 `tests/run_all.gd`（71 条测试）、GitHub Actions CI（Linux + Windows）
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
