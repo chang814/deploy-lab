@@ -65,6 +65,11 @@ func set_captured(value: bool) -> void:
 	apply_mouse_mode.call(Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE)
 
 
+## 退出游戏。测试换成记录器
+var request_quit: Callable = func() -> void:
+	get_tree().quit()
+
+
 ## 真正改变鼠标模式的一步。无窗口环境下 Input.mouse_mode 不会生效，测试把它换成记录器来确认确实调用了
 var apply_mouse_mode: Callable = func(mode: Input.MouseMode) -> void:
 	Input.mouse_mode = mode
@@ -80,8 +85,13 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and captured:
 		var m: InputEventMouseMotion = event
 		look_by(m.screen_relative.x, m.screen_relative.y)
-	elif event is InputEventKey and event.pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
-		set_captured(false)
+	elif event is InputEventKey and event.pressed and not event.is_echo() \
+			and (event as InputEventKey).keycode == KEY_ESCAPE:
+		# 第一次 Esc 暂停（放出鼠标），暂停时再按 Esc 退出游戏
+		if captured:
+			set_captured(false)
+		else:
+			request_quit.call()
 	elif event is InputEventMouseButton and event.pressed and not captured:
 		set_captured(true)
 

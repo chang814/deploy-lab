@@ -79,6 +79,19 @@ func _test_input_events() -> void:
 	ok("一共切换了 3 次鼠标模式", modes.size() == 3)
 	player._unhandled_input(_motion(-100.0, 0.0))
 	near("重新锁定后响应移动", player.yaw_deg, 0.0, 1e-9)
+	# 游戏中按 Esc 只暂停、不退出；暂停时再按 Esc 才退出
+	var quits: Array[int] = []
+	player.request_quit = func() -> void: quits.append(1)
+	player._unhandled_input(esc)
+	ok("游戏中按 Esc 不退出", quits.is_empty() and not player.captured)
+	var held: InputEventKey = InputEventKey.new()
+	held.keycode = KEY_ESCAPE
+	held.pressed = true
+	held.echo = true
+	player._unhandled_input(held)
+	ok("按住 Esc 的自动重复不会直接退出", quits.is_empty())
+	player._unhandled_input(esc)
+	ok("暂停时再按 Esc 退出", quits.size() == 1)
 	player.set_captured(false)
 	root.free()
 
