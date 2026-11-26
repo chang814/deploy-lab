@@ -1,4 +1,4 @@
 {
 	"_comment": "玩家设置。把 sensitivity 改成你在 CS2 里的灵敏度（控制台输入 sensitivity 可查看）。之后会改为自动从 CS2 cfg 只读导入（Issue #37）。",
-	"sensitivity": 1.25
+	"sensitivity": 1.0
 }
