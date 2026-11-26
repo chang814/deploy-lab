@@ -517,14 +517,48 @@ class AnalyzeTest(Base):
 
     def test_ammo_and_flash_must_agree(self):
         self.invalid(self.run_cycle(ammo_shift=1)[0], "对不上")      # 弹药数字晚于火光
-        self.invalid(self.run_cycle(ammo_shift=-3)[0], "对不上")     # 早太多
-        self.invalid(self.run_cycle(ammo_shift=-1, extra_ammo=[200])[0], "对不上")   # 更早有一次变白
+        self.invalid(self.run_cycle(ammo_shift=-2)[0], "对不上")     # 早于实测范围（0–1 帧）
+        self.invalid(self.run_cycle(ammo_shift=-1, extra_ammo=[200])[0], "2 次")   # 更早有一次变白
+
+    def test_codex_pr34_white_interference_before_shot(self):
+        # PR #34 第 1 轮反例：真实变化在 300，第 298 帧另有白色干扰（合成数据里每次变白持续 2 帧，
+        # 所以 298–301 连成一段、只有一个上升沿 298）→ 比火光早 2 帧，超出实测 0–1 帧 → 作废
+        self.invalid(self.run_cycle(extra_ammo=[298])[0], "对不上")
+        # 干扰与真实变化之间有间隔（297–298 变白，299 恢复，300 再变白）→ 两次变白，无法确定 → 作废
+        self.invalid(self.run_cycle(extra_ammo=[297])[0], "无法确定")
+
+    def test_seamless_white_interference_is_a_known_limit(self):
+        # 已知局限：干扰在火光前 1 帧且与真实变化无缝相连 → 只有一个上升沿 299，工具会取 299（早 1 帧）。
+        # 这与人工抽查里「火光很暗、数字早 1 帧」的真实情形分不开，由人工逐帧抽查兜底
+        cs = self.run_cycle(extra_ammo=[299])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 299)
+
+    def test_white_after_flash_is_ignored(self):
+        # 火光之后再变白（连射的后续几发）不影响
+        cs = self.run_cycle(extra_ammo=[310])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
 
     def test_no_ammo_change_is_invalid(self):
         self.invalid(self.run_cycle(ammo_shift=500)[0], "没有看到弹药数字变化")
 
     def test_old_features_without_ammo_column(self):
         self.invalid(self.run_cycle(ammo_shift=None)[0], "ammo 列")
+
+    def test_samples_csv_header_must_match(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "s.csv")
+        an.append_samples(path, [["A", "x", 1, 2, 2, "0.1", 1, ""]])
+        an.append_samples(path, [["A", "x", 3, 4, 4, "0.1", 1, ""]])
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(len(f.read().strip().splitlines()), 3)
+        old = os.path.join(d, "old.csv")
+        with open(old, "w", encoding="utf-8") as f:
+            f.write("item,video,start_frame,flash_frame,duration_s,valid,reason\n")
+        with self.assertRaises(ValueError):
+            an.append_samples(old, [["A", "x", 1, 2, 2, "0.1", 1, ""]])
 
     def test_summary(self):
         cs = [an.Cycle("A", 0, 0.0, valid=True, duration_s=v) for v in (1.0, 1.02, 1.01)] + [an.Cycle("A", 0, 0.0)]
