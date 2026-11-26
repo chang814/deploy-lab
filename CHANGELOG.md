@@ -6,7 +6,7 @@
 
 ## [Unreleased]
 ### 新增
-- v0.1 第一人称视角练习场景（#35）：灰盒房间（世界坐标网格材质）、十字准星、与 CS2 同公式的视角（`src/game/fps_look.gd`，原始鼠标位移 + LookMath，4:3 水平 90° 换算的垂直 FOV），Esc 暂停（放出鼠标、显示暂停提示，点击继续，暂停时再按 Esc 退出）；默认全屏；左下角显示 yaw/pitch/灵敏度；玩家灵敏度设置 `data/player/settings.json`
+- v0.1 第一人称视角练习场景（#35）：灰盒房间（世界坐标网格材质）、十字准星、采用项目规格基线（与 CS2 相同换算公式）的视角（`src/game/fps_look.gd`，原始鼠标位移 + LookMath，4:3 水平 90° 换算的垂直 FOV），Esc 暂停（放出鼠标、显示暂停提示，点击继续，暂停时再按 Esc 退出）；默认全屏；左下角显示 yaw/pitch/灵敏度；玩家灵敏度设置 `data/player/settings.json`
 - 共享文件夹协作协议（worktree 隔离、单写入者、GitHub 交接）
 - Codex 协作提示词 `docs/prompts/codex-kickoff.md`
 - MIT 许可证

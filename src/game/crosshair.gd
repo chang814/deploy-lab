@@ -37,5 +37,5 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, 16, Color(1, 1, 1, 0.8))
 
 
-func _process(_delta: float) -> void:
+func _process(_delta_s: float) -> void:
 	queue_redraw()
