@@ -45,7 +45,7 @@ static func wish_dir(input: Vector2, yaw_deg: float) -> Vector3:
 	if input.length_squared() < 1e-12:
 		return Vector3.ZERO
 	var n: Vector2 = input.normalized()
-	var y: float = deg_to_rad(yaw_deg)
-	var forward: Vector3 = Vector3(sin(y), 0.0, -cos(y))
-	var right: Vector3 = Vector3(cos(y), 0.0, sin(y))
+	var yaw_rad: float = deg_to_rad(yaw_deg)
+	var forward: Vector3 = Vector3(sin(yaw_rad), 0.0, -cos(yaw_rad))
+	var right: Vector3 = Vector3(cos(yaw_rad), 0.0, sin(yaw_rad))
 	return (right * n.x + forward * n.y).normalized()

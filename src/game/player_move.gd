@@ -23,6 +23,13 @@ func setup(c: MoveConfig) -> void:
 	cfg = c
 	_look = get_node(look_path) as FpsLook
 	_look.position.y = c.get_f("eye_height_m") - c.get_f("body_height_m") / 2.0
+	# 碰撞体尺寸也来自配置（复制一份形状，避免改到场景里共享的资源）
+	var body: CollisionShape3D = get_node_or_null(^"Body") as CollisionShape3D
+	if body != null:
+		var capsule: CapsuleShape3D = CapsuleShape3D.new()
+		capsule.radius = c.get_f("body_radius_m")
+		capsule.height = c.get_f("body_height_m")
+		body.shape = capsule
 
 
 ## 一步的速度计算。input：x = 右，y = 前（各 -1..1）；walk：慢走；jump：本步请求起跳。
@@ -46,6 +53,24 @@ func step(v: Vector3, input: Vector2, walk: bool, jump: bool, on_floor: bool, ya
 	return v
 
 
+## 按键是否按着。测试换成假的键盘状态
+var key_down: Callable = func(key: Key) -> bool:
+	return Input.is_physical_key_pressed(key)
+
+
+## WASD → 输入向量（x = 右，y = 前）。
+func read_move_input() -> Vector2:
+	return Vector2(
+		float(key_down.call(KEY_D)) - float(key_down.call(KEY_A)),
+		float(key_down.call(KEY_W)) - float(key_down.call(KEY_S))
+	)
+
+
+## 是否有待处理的起跳请求（测试用）。
+func jump_queued() -> bool:
+	return _jump_queued
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	# 空格要「按下」才起跳（与 CS2 默认一致：按住不会连跳）
 	if event is InputEventKey and event.pressed and not event.is_echo() \
@@ -57,11 +82,8 @@ func _physics_process(dt_s: float) -> void:
 	if cfg == null:
 		return
 	var active: bool = _look != null and _look.captured
-	var input: Vector2 = Vector2.ZERO
-	if active:
-		input.x = float(Input.is_physical_key_pressed(KEY_D)) - float(Input.is_physical_key_pressed(KEY_A))
-		input.y = float(Input.is_physical_key_pressed(KEY_W)) - float(Input.is_physical_key_pressed(KEY_S))
-	var walk: bool = active and Input.is_physical_key_pressed(KEY_SHIFT)
+	var input: Vector2 = read_move_input() if active else Vector2.ZERO
+	var walk: bool = active and key_down.call(KEY_SHIFT)
 	var jump: bool = active and _jump_queued
 	_jump_queued = false
 	velocity = step(velocity, input, walk, jump, is_on_floor(), _look.yaw_deg, dt_s)
