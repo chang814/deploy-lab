@@ -6,6 +6,9 @@
     鼠标中键按下 = 开始新一轮（清零）
     鼠标右键按下 = 结束本轮，写一行 CSV
 
+注意：Raw Input 收到的是**整个系统**的鼠标点击，包括在其他窗口里的点击；Godot 只收到自己窗口里的。
+所以这里的轮号会比 Godot 多，比对时按每行的毫秒时间戳 t_unix 配对，多出来的行不参与比较。
+
 只读取鼠标输入，不读取、不注入任何其他进程。只依赖 Python 标准库。
 
 用法：
@@ -125,7 +128,7 @@ kernel32.GetModuleHandleW.restype = wintypes.HMODULE
 
 
 CSV_HEADER = [
-    "time", "round", "valid", "raw_x", "raw_y", "events",
+    "time", "t_unix", "round", "valid", "raw_x", "raw_y", "events",
     "absolute_events", "read_errors", "boundary_motion", "sync_lost", "devices",
 ]
 
@@ -200,6 +203,8 @@ class Counter:
                 w.writerow(CSV_HEADER)
             w.writerow([
                 datetime.datetime.now().isoformat(timespec="seconds"),
+                # 系统时钟的 Unix 秒（含毫秒），与 Godot 的记录按此配对
+                f"{time.time():.3f}",
                 self.round_index, int(self.valid()), self.x, self.y, self.events,
                 self.absolute_events, self.read_errors, int(self.boundary_motion), int(self.sync_lost),
                 len(self.devices),

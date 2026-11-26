@@ -22,8 +22,14 @@ python -I -m unittest discover -s spikes/raw-input/tools -p "test_*.py"
    ```powershell
    python -I tools/rawinput_counter.py --csv rawinput_runs.csv
    ```
-3. 在 Godot 中按 F5 运行 spike。在左下角填入 **DPI**、**CS2 灵敏度**，以及本组的**备注**（如 `T1-慢`）
+3. 在 Godot 中按 F5 运行 spike（也可以不打开编辑器，直接运行：`Godot.exe --path <本目录> -- --log=<CSV 完整路径>`，用 `--log` 把记录写到指定位置）。在左下角填入 **DPI**、**CS2 灵敏度**，以及本组的**备注**（如 `T1-慢`）
 4. 按 **C** 锁定鼠标
+
+## 引导模式（推荐）
+
+运行后屏幕顶部会逐步提示：现在做哪一步、怎么移动、已完成几轮，备注自动填写，每步完成后自动进入下一步（步骤见 `data/test_plan.json`）。只需照着提示操作，**不需要尺子**：判据是与基准一致，移动距离不重要。按 N 可以跳过当前步骤。
+
+两边的记录都带毫秒时间戳 `t_unix`，比对脚本按时间配对。对照工具收到的是整个系统的鼠标点击（包括在 Windows 设置里的点击），所以它的记录会比 Godot 多，多出的行不参与比较。横幅上的「已完成」只代表 Godot 这边记下了，最终以比对结果为准。
 
 ## 一轮测量的固定流程
 
