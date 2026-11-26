@@ -5,6 +5,94 @@ extends "res://tests/test_case.gd"
 func run_tests() -> void:
 	_test_main_scene()
 	_test_look_math_wiring()
+	_test_ready_in_tree()
+	_test_input_events()
+	_test_non_default_config()
+
+
+func _motion(x: float, y: float) -> InputEventMouseMotion:
+	var m: InputEventMouseMotion = InputEventMouseMotion.new()
+	m.screen_relative = Vector2(x, y)
+	m.relative = Vector2(x * 3.0, y * 3.0)   # 故意与 screen_relative 不同：确认用的是 screen_relative
+	return m
+
+
+func _setup_default(player: FpsLook) -> void:
+	player.setup(
+		LookConfig.from_json_text(
+			'{"m_yaw_deg": 0.022, "m_pitch_deg": 0.022, "pitch_min_deg": -89, "pitch_max_deg": 89, "base_hfov_4x3_deg": 90}'
+		),
+		PlayerSettings.from_json_text('{"sensitivity": 2}')
+	)
+
+
+func _test_ready_in_tree() -> void:
+	# 走 _ready() 的真实路径：读真实配置文件、关闭输入累积、锁定鼠标；_exit_tree() 恢复。
+	# 测试入口在主循环启动前运行、拿不到场景树，所以直接调用这两个回调
+	var root: Node = _make()
+	Input.use_accumulated_input = true
+	var player: FpsLook = root.get_node("Player") as FpsLook
+	player._ready()
+	ok("_ready 后已加载配置", player.look != null and player.settings != null)
+	ok("_ready 关闭了输入累积", not Input.use_accumulated_input)
+	ok("_ready 后处于锁定状态", player.captured)
+	near("_ready 后 FOV", (root.get_node("Player/Camera3D") as Camera3D).fov, 73.739795291688, 1e-4)
+	player._exit_tree()
+	ok("离开场景树后恢复输入累积", Input.use_accumulated_input)
+	ok("离开场景树后解除锁定", not player.captured)
+	root.free()
+
+
+func _test_input_events() -> void:
+	var root: Node = _make()
+	var player: FpsLook = root.get_node("Player") as FpsLook
+	_setup_default(player)
+	player.captured = true
+	# 鼠标向右 100、向上 50（screen_relative.y 为负）→ yaw +4.4°，pitch +2.2°
+	player._unhandled_input(_motion(100.0, -50.0))
+	near("事件 → yaw 向右", player.yaw_deg, 4.4, 1e-9)
+	near("事件 → pitch 抬头", player.pitch_deg, 2.2, 1e-9)
+	# Esc 释放后，鼠标移动不再转动视角
+	var esc: InputEventKey = InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	player._unhandled_input(esc)
+	ok("Esc 后解除锁定", not player.captured)
+	player._unhandled_input(_motion(1000.0, 1000.0))
+	near("解除锁定时忽略移动（yaw）", player.yaw_deg, 4.4, 1e-9)
+	near("解除锁定时忽略移动（pitch）", player.pitch_deg, 2.2, 1e-9)
+	# 点击重新锁定，再次响应移动
+	var click: InputEventMouseButton = InputEventMouseButton.new()
+	click.button_index = MOUSE_BUTTON_LEFT
+	click.pressed = true
+	player._unhandled_input(click)
+	ok("点击后重新锁定", player.captured)
+	player._unhandled_input(_motion(-100.0, 0.0))
+	near("重新锁定后响应移动", player.yaw_deg, 0.0, 1e-9)
+	player.set_captured(false)
+	root.free()
+
+
+func _test_non_default_config() -> void:
+	# 非默认 FOV 与不同轴增益：防止把默认值写死或把两个轴的参数接反
+	var root: Node = _make()
+	var player: FpsLook = root.get_node("Player") as FpsLook
+	player.setup(
+		LookConfig.from_json_text(
+			'{"m_yaw_deg": 0.03, "m_pitch_deg": 0.01, "pitch_min_deg": -10, "pitch_max_deg": 20, "base_hfov_4x3_deg": 100}'
+		),
+		PlayerSettings.from_json_text('{"sensitivity": 1.5}')
+	)
+	near("FOV 跟随配置（4:3 水平 100°）", (root.get_node("Player/Camera3D") as Camera3D).fov,
+		LookMath.vfov_from_hfov(100.0, 4.0 / 3.0), 1e-4)
+	player.look_by(100.0, -100.0)
+	near("yaw 用 m_yaw", player.yaw_deg, 100.0 * 1.5 * 0.03, 1e-9)
+	near("pitch 用 m_pitch", player.pitch_deg, 100.0 * 1.5 * 0.01, 1e-9)
+	player.look_by(0.0, -100000.0)
+	near("pitch 上限跟随配置", player.pitch_deg, 20.0, 0.0)
+	player.look_by(0.0, 100000.0)
+	near("pitch 下限跟随配置", player.pitch_deg, -10.0, 0.0)
+	root.free()
 
 
 func _make() -> Node:

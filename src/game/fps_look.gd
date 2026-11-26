@@ -3,7 +3,8 @@ extends Node3D
 ## 第一人称视角（v0.1）。本节点负责 yaw（绕 Y 轴），子节点 Camera3D 负责 pitch（绕 X 轴）。
 ##
 ## - 换算全部走 LookMath（docs/04-sensitivity-spec.md），参数来自 LookConfig 与 PlayerSettings
-## - 鼠标输入用 InputEventMouseMotion.screen_relative：P0-4 验证过它与 Windows Raw Input 的计数一致；
+## - 鼠标输入用 InputEventMouseMotion.screen_relative：P0-4 在已测条件下验证过它与 Windows Raw Input 的计数一致
+##   （显示缩放、高回报率等条件待补测，见 #21）；
 ##   关闭输入累积，每个事件单独换算
 ## - FOV：4:3 下水平 base_hfov_4x3_deg（默认 90°）换算成垂直 FOV，相机 KEEP_HEIGHT，宽屏时向两侧扩展
 ## - Esc 释放鼠标，点击窗口重新锁定
@@ -17,6 +18,8 @@ var yaw_deg: float = 0.0
 var pitch_deg: float = 0.0
 var look: LookConfig = null
 var settings: PlayerSettings = null
+## 本节点认为鼠标是否已锁定。与 Input.mouse_mode 同步设置；输入处理只看它，便于无窗口环境下测试
+var captured: bool = false
 var _camera: Camera3D = null
 
 
@@ -57,12 +60,18 @@ func look_by(counts_x: float, counts_y: float) -> void:
 	_apply_rotation()
 
 
-func set_captured(captured: bool) -> void:
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if captured else Input.MOUSE_MODE_VISIBLE
+func set_captured(value: bool) -> void:
+	captured = value
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
+
+
+func _exit_tree() -> void:
+	# 离开场景时恢复全局输入状态，避免影响之后的场景
+	set_captured(false)
+	Input.use_accumulated_input = true
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	var captured: bool = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 	if event is InputEventMouseMotion and captured:
 		var m: InputEventMouseMotion = event
 		look_by(m.screen_relative.x, m.screen_relative.y)
