@@ -16,6 +16,7 @@
 
 import argparse
 import csv
+import os
 import statistics
 import sys
 from dataclasses import dataclass, field
@@ -179,6 +180,22 @@ def compare(godot_rows: list[dict], raw_rows: list[dict], run: int = 1) -> Compa
     return c
 
 
+def _row_signature(row: dict) -> tuple:
+    return (row.get("time", ""), row.get("t_unix", ""), row.get("round", ""),
+            row.get("counts_x", ""), row.get("counts_y", ""), row.get("note", ""))
+
+
+def check_no_overlap(godot_runs: list[list[dict]]) -> None:
+    """多对文件合并前检查：不同文件里不能出现完全相同的 Godot 记录（例如把同一份数据复制了一份），否则会重复计数。"""
+    seen: dict[tuple, int] = {}
+    for i, rows in enumerate(godot_runs, start=1):
+        for row in rows:
+            sig = _row_signature(row)
+            if sig in seen and seen[sig] != i:
+                raise FormatError(f"第 {seen[sig]} 组和第 {i} 组文件包含相同的记录（{row.get('time', '')} 第 {row.get('round', '')} 轮），会重复计数")
+            seen.setdefault(sig, i)
+
+
 def merge(parts: list[Comparison]) -> Comparison:
     """把多次测试（多对文件）的结果合并成一份。"""
     out = Comparison()
@@ -252,7 +269,7 @@ def render(c: Comparison) -> str:
     lines.append("")
 
     lines += ["### 按备注分组", "",
-              "| 备注 | 轮数 | 完全一致 | 最大偏差 X / Y（counts） | 合计比例 Godot/基准 | 含小数事件 | 两路不一致事件 |",
+              "| 备注 | 轮数 | 完全一致的记录（条） | 最大偏差 X / Y（counts） | 合计比例 Godot/基准 | 含小数事件 | 两路不一致事件 |",
               "|---|---|---|---|---|---|---|"]
     for note, rs in _groups(c).items():
         mx = max(abs(x.diff_x) for x in rs)
@@ -285,7 +302,12 @@ def main() -> None:
     try:
         if len(a.csv) % 2:
             raise FormatError("CSV 必须成对给出：Godot 的、基准的")
-        parts = [compare(read_csv(a.csv[i]), read_csv(a.csv[i + 1]), run=i // 2 + 1) for i in range(0, len(a.csv), 2)]
+        resolved = [os.path.normcase(os.path.realpath(x)) for x in a.csv]
+        if len(set(resolved)) != len(resolved):
+            raise FormatError("同一个 CSV 文件被给了不止一次，会重复计数")
+        godot_runs = [read_csv(a.csv[i]) for i in range(0, len(a.csv), 2)]
+        check_no_overlap(godot_runs)
+        parts = [compare(godot_runs[i // 2], read_csv(a.csv[i + 1]), run=i // 2 + 1) for i in range(0, len(a.csv), 2)]
         text = render(merge(parts))
     except FormatError as e:
         sys.exit(str(e))

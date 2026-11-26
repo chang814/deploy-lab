@@ -120,6 +120,12 @@ class CompareTest(unittest.TestCase):
         self.assertIn("**数据层通过**", cr.verdict(merged))
         self.assertIn("第2组文件", cr.render(merged) + merged.compared[-1].label)
 
+    def test_same_data_twice_is_rejected(self):
+        gg = [g(i, 10, 0, T0 + i) for i in range(1, 5)]
+        with self.assertRaises(cr.FormatError):
+            cr.check_no_overlap([gg, [dict(x) for x in gg]])
+        cr.check_no_overlap([gg, [g(1, 10, 0, T0 + 500)]])  # 不同记录可以合并
+
     def test_fractional_godot_counts_not_exact(self):
         c = cr.compare([g(1, 10.5, 0, T0)], [r(1, 10, 0, T0)])
         self.assertFalse(c.compared[0].exact)
