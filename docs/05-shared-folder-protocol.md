@@ -29,7 +29,8 @@ Set-Location .worktrees/<分支名>
 
 - **`Set-Location` 之后的所有编辑、测试、提交、推送、提 PR，都必须在该 worktree 目录里执行。** 每次执行写操作前用 `git rev-parse --show-toplevel` 确认自己所在的目录。
 - 禁止使用 `git worktree add -B`、`--force` 或 `git branch -f` 绕过冲突保护；遇到冲突就停下来报告。
-- `.worktrees/` 已在 `.gitignore` 中，不会被提交。分支名含 `/` 会形成多层目录，这是正常的。
+- `.worktrees/` 已在 `.gitignore` 中，不会被提交。
+- **第一次在某台电脑上使用 worktree 时**，在主文件夹执行一次 `New-Item -ItemType File -Force .worktrees/.gdignore`。仓库根目录就是 Godot 工程（ADR 0002），这个空文件让在主文件夹打开的 Godot 编辑器不去扫描各个任务的代码副本。它在被忽略的目录里，所以每台电脑要自己建一次。分支名含 `/` 会形成多层目录，这是正常的。
 - 任务合并后由作者清理，**先回到主文件夹再删除**：
   ```powershell
   Set-Location D:\桌面\mcs

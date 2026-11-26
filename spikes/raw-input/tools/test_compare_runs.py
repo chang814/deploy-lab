@@ -160,6 +160,7 @@ class FileFormatTest(unittest.TestCase):
         self.assertTrue(c.compared[0].exact)
         self.assertEqual(c.compared[0].note, '"T1，慢')
 
+    @unittest.skipUnless(sys.platform == "win32", "rawinput_counter 只能在 Windows 上导入")
     def test_header_matches_counter(self):
         import rawinput_counter as rc
         self.assertEqual(",".join(rc.CSV_HEADER), self.RAW_HEADER)

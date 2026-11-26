@@ -27,6 +27,12 @@ from overlay_state import KEYS, LockedCsvLog, OverlayState, decode_keyboard, dec
 if sys.platform != "win32":
     sys.exit("只支持 Windows")
 
+# 控制台编码不是 UTF-8/GBK 时（例如英文 Windows 的 cp1252），打印中文会抛 UnicodeEncodeError。
+# 改为无法编码的字符用转义显示，保证工具不会因为系统语言而崩溃（CI 的 Windows 机器上发现）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(errors="backslashreplace")
+
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 

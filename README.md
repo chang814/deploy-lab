@@ -31,3 +31,16 @@
 ## 技术栈
 
 Godot 4（GDScript）· Git + GitHub（Issues / PR / Releases）· 语义化版本 · 约定式提交
+
+## 开发
+
+仓库根目录就是 Godot 4.7.2 工程（结构见 [ADR 0002](docs/decisions/0002-project-structure.md)）。
+
+运行测试：
+
+```powershell
+godot --headless --path . --import
+godot --headless --path . -s res://tests/run_all.gd
+```
+
+每个 PR 都会由 GitHub Actions 自动运行测试（Linux 跑 Godot 测试与通用 Python 测试，Windows 跑 Windows 专用测试）。
