@@ -20,6 +20,7 @@ RI_MOUSE_RIGHT_BUTTON_UP = 0x0008
 RI_MOUSE_WHEEL = 0x0400
 
 WHEEL_FLASH_S = 0.10  # 滚轮没有「松开」，点亮这么久，保证 60 fps 录像里至少有几帧能看到
+MIN_LIT_S = 0.10      # 任何一次按下至少点亮这么久（约 6 个录像帧），即使按键已经松开，避免快速短按在录像里看不到
 
 
 def decode_keyboard(vkey: int, flags: int) -> tuple[str, bool] | None:
@@ -49,6 +50,8 @@ def decode_mouse(button_flags: int) -> list[tuple[str, bool]]:
 @dataclass
 class OverlayState:
     pressed: dict[str, bool] = field(default_factory=lambda: {k: False for k in KEYS})
+    lit_until: dict[str, float] = field(default_factory=lambda: {k: 0.0 for k in KEYS})
+    presses: dict[str, int] = field(default_factory=lambda: {k: 0 for k in KEYS})  # 每个键累计按下次数，显示在格子里
     wheel_until: float = 0.0
     log: list[tuple[float, str, str]] = field(default_factory=list)  # (时间戳, 键名, "down"/"up"/"wheel")
 
@@ -56,15 +59,19 @@ class OverlayState:
         """应用一次按键变化，返回是否需要记录（按住时的自动重复不记录）。"""
         if name == "滚轮":
             self.wheel_until = t + WHEEL_FLASH_S
+            self.presses[name] += 1
             self.log.append((t, name, "wheel"))
             return True
         if self.pressed.get(name) == down:
             return False  # 键盘按住不放时 Windows 会重复发送按下，只记第一次
         self.pressed[name] = down
+        if down:
+            self.presses[name] += 1
+            self.lit_until[name] = t + MIN_LIT_S
         self.log.append((t, name, "down" if down else "up"))
         return True
 
     def is_lit(self, name: str, now: float) -> bool:
         if name == "滚轮":
             return now < self.wheel_until
-        return self.pressed.get(name, False)
+        return self.pressed.get(name, False) or now < self.lit_until.get(name, 0.0)

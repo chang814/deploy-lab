@@ -175,10 +175,15 @@ class RawInputThread(threading.Thread):
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
+        # 窗口必须由创建它的线程销毁
+        user32.DestroyWindow(hwnd)
 
-    def stop(self) -> None:
+    def stop(self, timeout_s: float = 2.0) -> None:
+        """通知消息循环退出，并等待线程结束；之后不会再有回调写 CSV。"""
         if self.thread_id:
             user32.PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0)
+        if self.is_alive():
+            self.join(timeout_s)
 
 
 def main() -> None:
@@ -196,8 +201,20 @@ def main() -> None:
     state, lock = OverlayState(), threading.Lock()
     raw = RawInputThread(state, lock, writer)
     raw.start()
-    raw.ready.wait(3)
+
+    def shutdown() -> None:
+        """统一的退出路径：先停输入线程并等它结束，再刷新、关闭文件。"""
+        raw.stop()
+        with lock:
+            if not f.closed:
+                f.flush()
+                f.close()
+
+    if not raw.ready.wait(3):
+        shutdown()
+        sys.exit("Raw Input 线程启动超时")
     if raw.error:
+        shutdown()
         sys.exit(raw.error)
 
     box, gap = 58, 6
@@ -213,16 +230,18 @@ def main() -> None:
     for i, k in enumerate(KEYS):
         x = gap + i * (box + gap)
         rect = canvas.create_rectangle(x, gap, x + box, gap + box, fill="#2a2d35", outline="#555")
-        text = canvas.create_text(x + box / 2, gap + box / 2, text=k, fill="#ddd", font=("Microsoft YaHei", 14, "bold"))
-        cells[k] = (rect, text)
+        text = canvas.create_text(x + box / 2, gap + box / 2 - 6, text=k, fill="#ddd", font=("Microsoft YaHei", 14, "bold"))
+        # 累计按下次数：录像里如果某次按键没看到点亮，编号会跳号，可以据此发现漏显示
+        count = canvas.create_text(x + box / 2, gap + box - 10, text="0", fill="#999", font=("Consolas", 10))
+        cells[k] = (rect, text, count)
     close = canvas.create_text(width - 11, 10, text="×", fill="#aaa", font=("Arial", 12, "bold"))
+    warn = canvas.create_text(width - 11, box, text="", fill="#ff5050", font=("Arial", 12, "bold"))
 
     drag = {"x": 0, "y": 0}
 
     def on_press(e):
         if canvas.find_withtag("current") == (close,):
-            raw.stop()
-            f.close()
+            shutdown()
             root.destroy()
             return
         drag["x"], drag["y"] = e.x, e.y
@@ -239,10 +258,15 @@ def main() -> None:
         now = time.time()
         with lock:
             lit = {k: state.is_lit(k, now) for k in KEYS}
-            f.flush()
-        for k, (rect, text) in cells.items():
+            counts = dict(state.presses)
+            if not f.closed:
+                f.flush()
+        for k, (rect, text, count) in cells.items():
             canvas.itemconfig(rect, fill="#2bd94a" if lit[k] else "#2a2d35")
             canvas.itemconfig(text, fill="#000" if lit[k] else "#ddd")
+            canvas.itemconfig(count, text=str(counts[k]), fill="#000" if lit[k] else "#999")
+        # 读取失败时右下角显示红色「!」，这次录像要告诉 Claude
+        canvas.itemconfig(warn, text="!" if raw.read_errors else "")
         tick["n"] += 1
         if tick["n"] % 50 == 0:
             root.attributes("-topmost", True)  # 游戏切到前台后重新置顶
@@ -250,8 +274,12 @@ def main() -> None:
         root.after(4, refresh)
 
     print(f"输入显示层已启动。按键记录：{path}")
+    root.protocol("WM_DELETE_WINDOW", lambda: (shutdown(), root.destroy()))
     refresh()
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        shutdown()
 
 
 if __name__ == "__main__":

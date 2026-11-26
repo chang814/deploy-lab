@@ -55,6 +55,27 @@ class StateTest(unittest.TestCase):
         # 滚轮流光至少覆盖 60 fps 录像的 5 帧
         self.assertGreaterEqual(s.WHEEL_FLASH_S, 5 / 60)
 
+    def test_short_tap_stays_lit_for_min_time(self):
+        # Codex 反例：1.001 s 按下、1.003 s 松开，1.004 s 刷新时也必须是亮的
+        st = s.OverlayState()
+        st.apply("Q", True, 1.001)
+        st.apply("Q", False, 1.003)
+        self.assertTrue(st.is_lit("Q", 1.004))
+        self.assertTrue(st.is_lit("Q", 1.001 + s.MIN_LIT_S - 0.001))
+        self.assertFalse(st.is_lit("Q", 1.001 + s.MIN_LIT_S + 0.001))
+        self.assertGreaterEqual(s.MIN_LIT_S, 5 / 60)
+
+    def test_press_counter_counts_downs_only(self):
+        st = s.OverlayState()
+        for t in (1.0, 2.0, 3.0):
+            st.apply("1", True, t)
+            st.apply("1", False, t + 0.05)
+        st.apply("1", True, 4.0)
+        st.apply("1", True, 4.03)  # 自动重复不计
+        st.apply("滚轮", True, 5.0)
+        self.assertEqual(st.presses["1"], 4)
+        self.assertEqual(st.presses["滚轮"], 1)
+
     def test_all_keys_have_cells(self):
         self.assertEqual(set(s.VKEY_NAMES.values()) | {"滚轮", "左键", "右键"}, set(s.KEYS))
 
