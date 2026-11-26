@@ -59,6 +59,31 @@ class SpecTest(unittest.TestCase):
     def test_audio_offset_rejected(self):
         self.assertTrue(any("起始时间" in p for p in ft.check_spec(self.info(audio={"start_time": "0.021000"}))))
 
+    def test_missing_start_time_rejected(self):
+        # 第 2 轮反例：缺少 start_time 时旧版按 0 处理，等于没检查
+        self.assertTrue(any("缺少起始时间" in p for p in ft.check_spec(self.info(video={"start_time": "N/A"}))))
+        self.assertTrue(any("缺少起始时间" in p for p in ft.check_spec(self.info(audio={}))))
+
+
+class FrameTimesTest(unittest.TestCase):
+    def test_uniform_timeline_passes(self):
+        self.assertEqual(ft.check_timeline([i / 60 for i in range(600)], 60.0), [])
+
+    def test_dropped_frame_rejected(self):
+        times = [i / 60 for i in range(600) if i != 300]
+        self.assertTrue(any("帧间隔" in p for p in ft.check_timeline(times, 60.0)))
+
+    def test_duplicated_frame_rejected(self):
+        times = [i / 60 for i in range(600)]
+        times.insert(300, times[300])
+        self.assertTrue(ft.check_timeline(times, 60.0))
+
+    def test_late_first_frame_rejected(self):
+        self.assertTrue(any("第一帧" in p for p in ft.check_timeline([0.1 + i / 60 for i in range(60)], 60.0)))
+
+    def test_empty_rejected(self):
+        self.assertTrue(ft.check_timeline([], 60.0))
+
 
 if __name__ == "__main__":
     unittest.main()

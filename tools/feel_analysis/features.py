@@ -72,10 +72,36 @@ def check_spec(info: dict) -> list[str]:
         problems.append(f"不是恒定 {CALIBRATED['fps']:g} fps（r={r:g}，avg={avg:g}）")
     if a is None:
         problems.append("没有音轨（需要用枪声确认开枪）")
+    elif v.get("start_time") in (None, "", "N/A") or a.get("start_time") in (None, "", "N/A"):
+        problems.append("音频或视频缺少起始时间，无法确认是否对齐")
     else:
-        skew = abs(float(v.get("start_time") or 0) - float(a.get("start_time") or 0))
+        skew = abs(float(v["start_time"]) - float(a["start_time"]))
         if skew > MAX_START_SKEW_S:
             problems.append(f"音视频起始时间相差 {skew * 1000:.1f} ms")
+    return problems
+
+
+MAX_FRAME_STEP_ERR_S = 0.0005   # 相邻视频帧时间戳与 1/fps 的允许偏差
+
+
+def frame_times(video: str) -> list[float]:
+    """每个视频帧的显示时间戳（秒）。"""
+    out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                          "-of", "csv=p=0", video], capture_output=True, check=True, text=True).stdout
+    return [float(x.split(",")[0]) for x in out.split() if x.strip() and x.strip() != "N/A"]
+
+
+def check_timeline(times: list[float], fps: float) -> list[str]:
+    """逐帧时间戳必须从起点开始、按 1/fps 等间隔连续（不丢帧、不重复、不变速）。"""
+    if not times:
+        return ["读不到视频帧时间戳"]
+    step = 1.0 / fps
+    bad = [i for i in range(1, len(times)) if abs(times[i] - times[i - 1] - step) > MAX_FRAME_STEP_ERR_S]
+    problems = []
+    if abs(times[0]) > MAX_START_SKEW_S:
+        problems.append(f"第一帧时间戳为 {times[0]:.4f} s，不是 0")
+    if bad:
+        problems.append(f"有 {len(bad)} 处帧间隔不是 1/{fps:g} 秒（第一处在第 {bad[0]} 帧）")
     return problems
 
 
@@ -174,12 +200,18 @@ def main() -> None:
     declared = int(info["video"].get("nb_frames") or 0)
     if n == 0 or (declared and not 0 <= declared - n <= MAX_FRAME_SHORTFALL):
         sys.exit(f"拒绝分析：解出 {n} 帧，容器记录 {declared} 帧")
+    times = frame_times(a.video)
+    if len(times) != n:
+        sys.exit(f"拒绝分析：时间戳 {len(times)} 个，解出 {n} 帧")
+    problems = check_timeline(times, fps)
+    if problems:
+        sys.exit("拒绝分析：" + "；".join(problems))
     audio = audio_rms(a.video, fps, n)
     with open(a.out_csv, "w", newline="", encoding="utf-8") as f:
         wr = csv.writer(f)
         wr.writerow(["frame", "t", "fps"] + [f"lit_{k}" for k in KEYS] + ["flash", "audio"])
         for i in range(n):
-            wr.writerow([i, f"{i / fps:.4f}", f"{fps:.4f}"] + [int(x) for x in lit[i]] + [flash[i], f"{audio[i]:.0f}"])
+            wr.writerow([i, f"{times[i]:.4f}", f"{fps:.4f}"] + [int(x) for x in lit[i]] + [flash[i], f"{audio[i]:.0f}"])
     print(f"已写入 {a.out_csv}：{n} 帧，{fps:g} fps")
 
 
