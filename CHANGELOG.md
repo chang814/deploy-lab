@@ -18,6 +18,7 @@
 - 原创练习地图分区中文显示名 `data/map/zone_names.zh-CN.json`（Z0–Z6 共 7 个训练分区）
 - P0-4 引导测试模式：屏幕顶部逐步提示操作，自动填写备注、计数并切换步骤（`data/test_plan.json`）；`--log`、`--plan` 启动参数；比对改为按毫秒时间戳配对，可合并多次测试
 - P0-4 实测报告 `spikes/raw-input/REPORT.md` 与原始数据：已测条件下 50 个有效轮次与 Raw Input 完全一致
+- 决策记录 0002：v0.1 工程结构（仓库根目录即 Godot 工程）、依赖方向、测试入口与 CI
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
