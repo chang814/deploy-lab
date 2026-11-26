@@ -403,6 +403,20 @@ def find_flash(frames: list[Frame], start: int, end: int) -> tuple[int | None, s
     return f, ""
 
 
+def confirmed_flashes(frames: list[Frame], start: int, end: int) -> list[int]:
+    """(start, end) 之间「确认的」火光开始帧：连续至少 MIN_FLASH_FRAMES 帧，且之后 AV_MIN_LAG–AV_MAX_LAG 帧内开始出现枪声。
+    用来界定「下一发」，单帧橙色或无声的橙色不算。"""
+    shots = audio_onsets(frames, start, min(len(frames), end + AV_MAX_LAG))
+    out = []
+    for f in flash_onsets(frames, start, end):
+        run = f
+        while run < len(frames) and frames[run].flash >= FLASH_MIN:
+            run += 1
+        if run - f >= MIN_FLASH_FRAMES and any(f + AV_MIN_LAG <= a <= f + AV_MAX_LAG for a in shots):
+            out.append(f)
+    return out
+
+
 def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int) -> tuple[int | None, str]:
     """(start, end) 之间弹药数字第一次变白的帧，必须落在 [flash − AMMO_MAX_EARLY, flash] 内。
 
@@ -416,7 +430,7 @@ def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int) -> t
           if frames[g].ammo >= AMMO_MIN and frames[g - 1].ammo < AMMO_MIN]
     if not on:
         return None, "火光前后没有看到弹药数字变化，无法确认开枪"
-    later = flash_onsets(frames, flash, end)
+    later = confirmed_flashes(frames, flash, end)
     limit = later[0] - AMMO_MAX_EARLY if later else end
     near = [x for x in on if x < limit]
     if len(near) > 1:

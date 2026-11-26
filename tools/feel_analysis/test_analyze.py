@@ -532,6 +532,21 @@ class AnalyzeTest(Base):
         # 之后没有第二段火光 → 检查范围到窗口结束 → 两次变白 → 作废
         self.invalid(self.run_cycle(ammo_shift=6, extra_ammo=[299])[0], "无法确定")
 
+    def test_codex_pr34_r4_unconfirmed_orange_cannot_cut_window(self):
+        # PR #34 第 4 轮反例：真实火光 [300,306)，299 白色干扰，306 真实变化，307 一帧无声橙色。
+        # 单帧、无枪声的橙色不算「下一发」，不能截断检查范围 → 两次变白 → 作废
+        p = dict(self.BASE)
+        fr = make(400, p, flashes=[(300, 306)], ammo_shift=6, extra_ammo=[299])
+        fr[307] = an.Frame(fr[307].t, fr[307].lit, 1800, fr[307].audio, fr[307].ammo)
+        cs = an.analyze(fr, FPS, "A", 0.1, (None, None), timeline(fr, p))
+        self.invalid(cs[0], "无法确定")
+
+    def test_second_shot_ammo_one_frame_before_its_flash(self):
+        # 连射第二发：弹药数字（359）比它的火光（360）早 1 帧 → 属于第二发，不算冲突
+        cs = self.run_cycle(flashes=((300, 310), (360, 370)), extra_ammo=[359])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
+
     def test_spray_shots_with_own_flash_are_not_conflicts(self):
         # 连射：第二发有自己的火光（360 开始）和弹药变化（360）→ 不算冲突，第一发仍有效
         cs = self.run_cycle(flashes=((300, 310), (360, 370)))
