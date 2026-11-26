@@ -35,6 +35,16 @@ class SaturatedOrangeTest(unittest.TestCase):
         self.assertEqual(ft.saturated_orange(fr), 20)
 
 
+class AmmoTest(unittest.TestCase):
+    def test_white_digits_counted(self):
+        fr = patch((255, 255, 255), 10)
+        self.assertEqual(ft.near_white(fr), 100)
+
+    def test_light_blue_digits_and_sand_not_counted(self):
+        self.assertEqual(ft.near_white(patch((170, 200, 240), 10)), 0)
+        self.assertEqual(ft.near_white(patch((215, 165, 110), 10)), 0)
+
+
 class SpecTest(unittest.TestCase):
     def info(self, **v):
         video = {"width": 1724, "height": 1080, "r_frame_rate": "60/1", "avg_frame_rate": "60/1",

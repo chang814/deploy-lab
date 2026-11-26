@@ -36,6 +36,10 @@ FLASH_R_MIN, FLASH_RB_DIFF_MIN, FLASH_G_MIN = 235, 150, 90
 
 
 # 已校准的录像规格：输入显示层格子坐标与火光阈值只在这个规格下验证过，其他规格一律拒绝
+# 弹药数字区域（右下角当前弹匣数）。开枪那一帧数字减一并短暂变成白色，平时是浅蓝色
+AMMO_REGION = (1080 / 1724, 990 / 1080, 1220 / 1724, 1050 / 1080)   # 左、上、右、下
+AMMO_WHITE_MIN = 235        # 三个通道都不低于这个值才算「白」（浅蓝的红通道约 170，沙色墙的蓝通道约 110）
+
 CALIBRATED = {"width": 1724, "height": 1080, "fps": 60.0}
 MAX_START_SKEW_S = 0.001     # 音视频起始时间差上限
 MAX_FRAME_SHORTFALL = 1      # 实际解出的帧数最多比容器记录少这么多帧
@@ -165,6 +169,18 @@ def flash_counts(video: str, w: int, h: int) -> list[int]:
     return [saturated_orange(fr) for fr in _frames(video, f"crop={cw}:{ch}:{x0}:{y0},scale={sw}:{sh}:flags=area", sw, sh)]
 
 
+def near_white(fr: np.ndarray) -> int:
+    """一帧中三个通道都不低于 AMMO_WHITE_MIN 的像素个数。"""
+    return int((fr.min(axis=2) >= AMMO_WHITE_MIN).sum())
+
+
+def ammo_counts(video: str, w: int, h: int) -> list[int]:
+    """每帧弹药数字区域（原分辨率）中接近白色的像素个数。第一批实测：开枪那一帧 440–680，其余 ≤ 42。"""
+    x0, y0 = int(round(w * AMMO_REGION[0])), int(round(h * AMMO_REGION[1]))
+    cw, ch = int(round(w * AMMO_REGION[2])) - x0, int(round(h * AMMO_REGION[3])) - y0
+    return [near_white(fr) for fr in _frames(video, f"crop={cw}:{ch}:{x0}:{y0}", cw, ch)]
+
+
 def audio_rms(video: str, fps: float, n_frames: int) -> list[float]:
     """每个视频帧时长内的音频 RMS（单声道，48 kHz）。没有音轨时全为 0。
 
@@ -200,8 +216,9 @@ def main() -> None:
     w, h, fps = probe(a.video)
     lit = overlay_lit(a.video, a.overlay_x, a.cell_step, a.overlay_y)
     flash = flash_counts(a.video, w, h)
-    if len(lit) != len(flash):
-        sys.exit(f"拒绝分析：两次解码的帧数不一致（{len(lit)} / {len(flash)}）")
+    ammo = ammo_counts(a.video, w, h)
+    if not len(lit) == len(flash) == len(ammo):
+        sys.exit(f"拒绝分析：三次解码的帧数不一致（{len(lit)} / {len(flash)} / {len(ammo)}）")
     n = len(lit)
     declared = int(info["video"].get("nb_frames") or 0)
     if n == 0 or (declared and not 0 <= declared - n <= MAX_FRAME_SHORTFALL):
@@ -215,9 +232,10 @@ def main() -> None:
     audio = audio_rms(a.video, fps, n)
     with open(a.out_csv, "w", newline="", encoding="utf-8") as f:
         wr = csv.writer(f)
-        wr.writerow(["frame", "t", "fps"] + [f"lit_{k}" for k in KEYS] + ["flash", "audio"])
+        wr.writerow(["frame", "t", "fps"] + [f"lit_{k}" for k in KEYS] + ["flash", "ammo", "audio"])
         for i in range(n):
-            wr.writerow([i, f"{times[i]:.4f}", f"{fps:.4f}"] + [int(x) for x in lit[i]] + [flash[i], f"{audio[i]:.0f}"])
+            wr.writerow([i, f"{times[i]:.4f}", f"{fps:.4f}"] + [int(x) for x in lit[i]]
+                        + [flash[i], ammo[i], f"{audio[i]:.0f}"])
     print(f"已写入 {a.out_csv}：{n} 帧，{fps:g} fps")
 
 

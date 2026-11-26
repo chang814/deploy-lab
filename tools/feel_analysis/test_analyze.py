@@ -18,17 +18,21 @@ DISPLAY_LAG = 0.005     # 合成的「按下 → 格子亮起」延迟
 
 
 def make(n: int, presses: dict[str, list[tuple[int, int]]], flashes: list[tuple[int, int]] = (),
-         flash_value: int = 1800, sound: bool = True, extra_audio: list[tuple[int, int]] = ()) -> list[an.Frame]:
+         flash_value: int = 1800, sound: bool = True, extra_audio: list[tuple[int, int]] = (),
+         ammo_shift: int | None = 0, extra_ammo: list[int] = ()) -> list[an.Frame]:
     """presses：键 → [(亮起帧, 熄灭帧)]；flashes：[(开始帧, 结束帧)] 期间火光指标为 flash_value，
-    sound 为真时每段火光开始后 AV_LAG 帧起有枪声；extra_audio：额外的枪声区间。"""
+    sound 为真时每段火光开始后 AV_LAG 帧起有枪声；extra_audio：额外的枪声区间。
+    ammo_shift：弹药数字在每段火光开始帧 + ammo_shift 变白 2 帧（None = 特征文件没有 ammo 列）；extra_ammo：额外变白的帧。"""
     shots = [(a + AV_LAG, b + AV_LAG) for a, b in flashes] if sound else []
     shots += list(extra_audio)
+    ammo_on = ([a + ammo_shift for a, _ in flashes] if ammo_shift is not None else []) + list(extra_ammo)
     frames = []
     for i in range(n):
         lit = {k: any(a <= i < b for a, b in presses.get(k, [])) for k in KEYS}
         flash = flash_value if any(a <= i < b for a, b in flashes) else 0
         audio = 9000.0 if any(a <= i < b for a, b in shots) else 100.0
-        frames.append(an.Frame(i / FPS, lit, flash, audio))
+        ammo = -1 if ammo_shift is None else (500 if any(a <= i < a + 2 for a in ammo_on) else 3)
+        frames.append(an.Frame(i / FPS, lit, flash, audio, ammo))
     return frames
 
 
@@ -391,6 +395,39 @@ class AnalyzeTest(Base):
         cs = self.run_cycle(presses=overlay, log_extra=[(190 / FPS, "R", "down"), (191 / FPS, "R", "up")])
         self.invalid(cs[0], "整段录像作废")
 
+    def test_left_lead_uses_worst_case_offset(self):
+        # 左键在火光前 13 帧（217 ms）按住：按估计偏移够 0.2 s；对齐区间最不利的一端扣掉后不够 → 作废
+        p = dict(self.BASE, L=[(287, 320)])
+        fr = make(400, p, flashes=[(300, 340)])
+        tl = timeline(fr, p)
+        self.assertGreater(tl.offset - tl.offset_lo, 0.017)   # 合成数据下候选区间有一定宽度
+        self.invalid(an.analyze(fr, FPS, "A", 0.1, (None, None), tl)[0], "最不利")
+
+    def test_offset_range_is_reported(self):
+        p = dict(self.BASE)
+        tl = timeline(make(400, p, flashes=[(300, 340)]), p)
+        self.assertLessEqual(tl.offset_lo, tl.offset)
+        self.assertLessEqual(tl.offset, tl.offset_hi + 1e-9)
+
+    def test_presses_before_video_do_not_change_weapon_tracking(self):
+        # 录像开始前按过 2（若参与推算，手里会变成 Glock）；武器推算只以 --initial 声明为准，
+        # 录像前的切枪按键不参与，否则 A（刀 → AK）会被推成别的方向
+        # （去掉 BASE 里录像内的那次 3，否则它会把手里重置成刀、掩盖问题）
+        base = {k: v for k, v in self.BASE.items() if k != "3"}
+        base["R"] = [(60, 66)]   # 补一段与切枪无关的按键，保证对齐有足够的配对
+        log = log_from(base, [(-2.0, "2", "down"), (-1.95, "2", "up")])
+        fr = make(400, base, flashes=[(300, 340)])
+        tl = an.build_timeline(fr, FPS, log, OBS)
+        self.assertEqual(tl.problems, [])
+        self.assertTrue(any(x.t < 0 and x.key == "2" for x in tl.presses))   # 录像前的事件仍在时间线里
+        cs = an.analyze(fr, FPS, "A", 0.1, ("knife", "ak"), tl)
+        self.assertEqual(len(cs), 1)
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        # 录像前的滚轮也不参与（否则手里会变成「不知道」）
+        log = log_from(base, [(-0.5, "wheel", "wheel")])
+        tl = an.build_timeline(fr, FPS, log, OBS)
+        self.assertTrue(an.analyze(fr, FPS, "A", 0.1, ("knife", "ak"), tl)[0].valid)
+
     def test_codex_r6_left_held_since_before_video(self):
         # 第 6 轮反例：左键在录像前 0.5 s 按下、第 120 帧松开（切枪在第 100 帧，那时左键按着）→ 作废
         overlay = {"L": [(0, 120), (150, 320)]}
@@ -470,6 +507,24 @@ class AnalyzeTest(Base):
         tl = timeline(fr, p)
         self.assertTrue(an.analyze(fr, FPS, "E2", 0.1, ("ak", "glock"), tl)[0].valid)
         self.assertFalse(an.analyze(fr, FPS, "E2", 0.1, (None, None), tl)[0].valid)
+
+    def test_shot_frame_is_ammo_change(self):
+        # 弹药数字比火光早 1 帧（火光很暗那一帧没达到阈值）：开枪帧取弹药数字那一帧
+        cs = self.run_cycle(ammo_shift=-1)
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual((cs[0].flash_frame, cs[0].shot_frame), (300, 299))
+        self.assertAlmostEqual(cs[0].duration_s, 199 / FPS * 0.1)
+
+    def test_ammo_and_flash_must_agree(self):
+        self.invalid(self.run_cycle(ammo_shift=1)[0], "对不上")      # 弹药数字晚于火光
+        self.invalid(self.run_cycle(ammo_shift=-3)[0], "对不上")     # 早太多
+        self.invalid(self.run_cycle(ammo_shift=-1, extra_ammo=[200])[0], "对不上")   # 更早有一次变白
+
+    def test_no_ammo_change_is_invalid(self):
+        self.invalid(self.run_cycle(ammo_shift=500)[0], "没有看到弹药数字变化")
+
+    def test_old_features_without_ammo_column(self):
+        self.invalid(self.run_cycle(ammo_shift=None)[0], "ammo 列")
 
     def test_summary(self):
         cs = [an.Cycle("A", 0, 0.0, valid=True, duration_s=v) for v in (1.0, 1.02, 1.01)] + [an.Cycle("A", 0, 0.0)]
