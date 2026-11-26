@@ -13,6 +13,7 @@ extends RefCounted
 ## - 非自动武器每次开火后必须松开扳机才能再开；自动武器按 fire_interval_s 连发
 ## - 弹匣打空后扣扳机自动换弹；R 手动换弹（弹匣不满时）；备弹无限
 ## - magazine = 0 表示不用弹药（刀）
+## - alt_interval_s > 0 的武器有右键副攻击（刀的重击）：左键优先；副攻击与主攻击共用「下一次可攻击时刻」
 
 enum State { DRAWING, READY, RELOADING }
 
@@ -32,6 +33,8 @@ var next_fire_s: float = 0.0
 var _trigger_released: bool = true
 var _pending_switch: String = "" # 本 tick 之前收到的切枪请求（下一个 tick 处理）
 var _pending_reload: bool = false
+## 最近一次 tick 开火时用的是不是副攻击（右键）
+var last_fire_alt: bool = false
 
 
 ## weapon_list：参数字典数组；start_id：开局手里的武器（立即可用，不需要拔出）。
@@ -92,8 +95,9 @@ func is_ready() -> bool:
 
 
 ## 推进一个 tick。trigger_held：这一 tick 扳机（左键）是否按着。返回这一 tick 是否开火。
-func tick(trigger_held: bool) -> bool:
+func tick(trigger_held: bool, alt_held: bool = false) -> bool:
 	now_s += tick_s
+	last_fire_alt = false
 	if not _pending_switch.is_empty():
 		_switch_to(_pending_switch)
 		_pending_switch = ""
@@ -110,6 +114,11 @@ func tick(trigger_held: bool) -> bool:
 			_start_reload()
 	if not trigger_held:
 		_trigger_released = true
+	if state == State.READY and not trigger_held and alt_held and float(w.get("alt_interval_s", 0.0)) > 0.0 \
+			and now_s >= next_fire_s - EPS_S:
+		next_fire_s = now_s + float(w["alt_interval_s"])
+		last_fire_alt = true
+		return true
 	if state != State.READY or not trigger_held:
 		return false
 	if uses_ammo and ammo[current] <= 0:

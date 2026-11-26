@@ -16,6 +16,9 @@
 		"bob_x_m": 0.008,
 		"bob_y_m": 0.006,
 		"slash_s": 0.3,
+		"stab_s": 0.55,
+		"inspect_knife_s": 3.2,
+		"inspect_gun_s": 2.6,
 		"tracer_s": 0.06
 	},
 	"weapons": [
@@ -50,6 +53,7 @@
 			"automatic": true,
 			"magazine": 0,
 			"reload_s": 0.0,
+			"alt_interval_s": 1.0,
 			"range_m": 1.5
 		}
 	]

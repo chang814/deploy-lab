@@ -9,6 +9,21 @@ const WOOD: Color = Color(0.45, 0.27, 0.13)
 const BLADE: Color = Color(0.78, 0.8, 0.83)
 const AK_WOOD: Color = Color(0.55, 0.27, 0.1)      # 上漆的桦木 / 胡桃木色
 const BAKELITE: Color = Color(0.32, 0.12, 0.06)    # 胶木（深红棕）
+const GLOVE: Color = Color(0.17, 0.18, 0.15)       # 战术手套
+const SLEEVE: Color = Color(0.27, 0.3, 0.24)       # 袖子
+
+
+## 手 + 前臂：hand_pos 为手掌中心，前臂从手腕向「下后方」伸出画面（arm_dir 为前臂方向的欧拉角，度）。
+static func _arm(parent: Node3D, hand_pos: Vector3, hand_size: Vector3, arm_rot_deg: Vector3) -> void:
+	var glove: StandardMaterial3D = _mat(GLOVE, 0.0, 0.85)
+	var sleeve: StandardMaterial3D = _mat(SLEEVE, 0.0, 0.9)
+	_box(parent, hand_size, hand_pos, glove)
+	var arm: Node3D = Node3D.new()
+	arm.position = hand_pos
+	arm.rotation_degrees = arm_rot_deg
+	parent.add_child(arm)
+	_box(arm, Vector3(0.05, 0.05, 0.09), Vector3(0, 0, 0.07), glove)       # 手腕 / 护腕
+	_box(arm, Vector3(0.07, 0.07, 0.4), Vector3(0, 0, 0.31), sleeve)      # 前臂（袖子）
 
 
 static func _mat(c: Color, metallic: float = 0.6, rough: float = 0.45) -> StandardMaterial3D:
@@ -47,6 +62,17 @@ static func _cyl(parent: Node3D, radius: float, length: float, pos: Vector3, mat
 	return mi
 
 
+## 把 xy 平面上的轮廓挤出成厚度为 depth 的薄片：轮廓 x 轴对齐武器的前方（-Z），y 轴向上，厚度沿 X 居中。
+static func _prism(parent: Node3D, outline: PackedVector2Array, depth: float, mat: Material) -> void:
+	var p: CSGPolygon3D = CSGPolygon3D.new()
+	p.polygon = outline
+	p.depth = depth
+	p.material = mat
+	p.rotation_degrees = Vector3(0, 90, 0)   # 轮廓 x → -Z（前方），挤出方向 → X
+	p.position = Vector3(depth / 2.0, 0, 0)  # 厚度居中
+	parent.add_child(p)
+
+
 static func _muzzle(parent: Node3D, pos: Vector3) -> void:
 	var m: Marker3D = Marker3D.new()
 	m.name = "Muzzle"
@@ -82,20 +108,33 @@ static func build(id: String) -> Node3D:
 			_box(root, Vector3(0.03, 0.09, 0.038), Vector3(0, -0.045, 0.0), bakelite, Vector3(-18, 0, 0))  # 握把
 			_box(root, Vector3(0.04, 0.062, 0.22), Vector3(0, -0.012, 0.15), wood, Vector3(-7, 0, 0))       # 枪托（向后下倾）
 			_muzzle(root, Vector3(0, 0.036, -0.755))
+			_arm(root, Vector3(0.004, -0.045, 0.01), Vector3(0.05, 0.075, 0.065), Vector3(28, 8, 0))     # 右手握把
+			_arm(root, Vector3(-0.004, -0.012, -0.33), Vector3(0.06, 0.05, 0.08), Vector3(22, -38, 0))  # 左手托护木
 		"pistol":
 			_box(root, Vector3(0.035, 0.045, 0.19), Vector3(0, 0.04, -0.07), metal)          # 套筒
 			_box(root, Vector3(0.032, 0.03, 0.15), Vector3(0, 0.005, -0.05), dark)           # 枪身
 			_box(root, Vector3(0.03, 0.11, 0.045), Vector3(0, -0.05, 0.0), dark, Vector3(14, 0, 0))  # 握把
 			_muzzle(root, Vector3(0, 0.04, -0.17))
+			_arm(root, Vector3(0.002, -0.045, 0.005), Vector3(0.05, 0.075, 0.06), Vector3(26, 6, 0))     # 右手握把
+			_arm(root, Vector3(-0.03, -0.06, 0.02), Vector3(0.045, 0.06, 0.06), Vector3(24, -30, 0))     # 左手托底
 		"knife":
-			# 战术直刀：刀刃在下（-Y），刀背在上；刀尖用两段斜切的薄片收窄
-			var steel: StandardMaterial3D = _mat(BLADE, 0.9, 0.2)
-			_box(root, Vector3(0.005, 0.034, 0.15), Vector3(0, 0.012, -0.125), steel)                    # 刀身
-			_box(root, Vector3(0.005, 0.026, 0.05), Vector3(0, 0.006, -0.212), steel, Vector3(-16, 0, 0))  # 刀尖下斜（刃口上挑）
-			_box(root, Vector3(0.005, 0.014, 0.04), Vector3(0, 0.022, -0.222), steel, Vector3(14, 0, 0))   # 刀尖上斜（假刃）
-			_box(root, Vector3(0.0055, 0.004, 0.12), Vector3(0, 0.02, -0.12), _mat(DARK, 0.6, 0.4))        # 血槽
-			_box(root, Vector3(0.036, 0.016, 0.012), Vector3(0, 0.01, -0.046), metal)                     # 护手
-			_box(root, Vector3(0.024, 0.032, 0.1), Vector3(0, 0.006, 0.01), dark)                         # 刀柄
-			_box(root, Vector3(0.026, 0.026, 0.014), Vector3(0, 0.006, 0.066), metal)                     # 柄尾
-			_muzzle(root, Vector3(0, 0.01, -0.24))
+			# 战术直刀（原创造型）：用 2D 轮廓挤出成形。轮廓坐标 (x = 沿刀身向前, y = 向上)，单位米；
+			# 刀刃在下（-Y）、刀背在上；刃口带弧度上挑到刀尖，刀背前段斜切（clip point）
+			var steel: StandardMaterial3D = _mat(BLADE, 0.95, 0.18)
+			var bevel: StandardMaterial3D = _mat(Color(0.9, 0.92, 0.95), 1.0, 0.08)
+			var grip: StandardMaterial3D = _mat(Color(0.12, 0.13, 0.12), 0.0, 0.9)
+			_prism(root, PackedVector2Array([          # 刀身
+				Vector2(0.0, 0.016), Vector2(0.135, 0.016), Vector2(0.205, 0.003), Vector2(0.19, -0.004),
+				Vector2(0.165, -0.012), Vector2(0.12, -0.0165), Vector2(0.0, -0.0165)]), 0.0035, steel)
+			_prism(root, PackedVector2Array([          # 开刃磨面（沿刃口的一条亮带）
+				Vector2(0.008, -0.009), Vector2(0.12, -0.009), Vector2(0.162, -0.005), Vector2(0.19, 0.0),
+				Vector2(0.19, -0.004), Vector2(0.165, -0.012), Vector2(0.12, -0.0165), Vector2(0.008, -0.0165)]), 0.0042, bevel)
+			_prism(root, PackedVector2Array([          # 护手
+				Vector2(-0.006, 0.024), Vector2(0.004, 0.024), Vector2(0.004, -0.028), Vector2(-0.006, -0.028)]), 0.02, metal)
+			_prism(root, PackedVector2Array([          # 刀柄（带指凹）
+				Vector2(-0.006, 0.015), Vector2(-0.11, 0.013), Vector2(-0.12, 0.004), Vector2(-0.115, -0.014),
+				Vector2(-0.09, -0.016), Vector2(-0.075, -0.012), Vector2(-0.06, -0.017), Vector2(-0.045, -0.013),
+				Vector2(-0.03, -0.018), Vector2(-0.006, -0.017)]), 0.022, grip)
+			_muzzle(root, Vector3(0, 0.003, -0.205))
+			_arm(root, Vector3(0, 0.0, 0.05), Vector3(0.048, 0.056, 0.085), Vector3(30, 5, 0))       # 右手握刀柄
 	return root

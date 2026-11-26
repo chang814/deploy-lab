@@ -5,7 +5,8 @@ extends RefCounted
 const DEFAULT_PATH: String = "res://data/weapons/weapons.json"
 const VIEWMODEL_KEYS: PackedStringArray = [
 	"draw_drop_m", "kick_m", "kick_return_per_s", "kick_pitch_deg_per_m", "flash_s", "converge_m",
-	"sway_deg_per_deg", "sway_max_deg", "sway_return_per_s", "bob_freq_per_m", "bob_x_m", "bob_y_m", "slash_s", "tracer_s",
+	"sway_deg_per_deg", "sway_max_deg", "sway_return_per_s", "bob_freq_per_m", "bob_x_m", "bob_y_m", "slash_s", "tracer_s", "stab_s",
+	"inspect_knife_s", "inspect_gun_s",
 ]
 const NUM_KEYS: PackedStringArray = ["slot", "draw_s", "fire_interval_s", "magazine", "reload_s", "range_m"]
 
@@ -52,6 +53,10 @@ static func from_json_text(text: String) -> WeaponConfig:
 			if typeof(wd.get(key)) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(wd[key])) or float(wd[key]) < 0.0:
 				c.error = "%s 的 %s 必须是有限的非负数" % [wd["id"], key]
 				return c
+		if wd.has("alt_interval_s") and (typeof(wd["alt_interval_s"]) not in [TYPE_INT, TYPE_FLOAT] \
+				or not is_finite(float(wd["alt_interval_s"])) or float(wd["alt_interval_s"]) < 0.0):
+			c.error = "%s 的 alt_interval_s 必须是有限的非负数" % wd["id"]
+			return c
 		if typeof(wd.get("automatic")) != TYPE_BOOL:
 			c.error = "%s 的 automatic 必须是 true / false" % wd["id"]
 			return c

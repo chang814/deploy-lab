@@ -3,7 +3,7 @@ extends Node3D
 ## 武器控制（v0.2）：挂在相机下。读输入 → 驱动 WeaponState（按物理 tick 推进）→ 表现。
 ## 暂停（鼠标未锁定）时不响应输入。
 ##
-## 输入：1 / 2 / 3 选槽位，Q 切到上一把，滚轮切换，左键开火（按住），R 换弹。
+## 输入：1 / 2 / 3 选槽位，Q 切到上一把，滚轮切换，左键开火（按住），右键刀重击，R 换弹，F 检视。
 ##
 ## 命中判定与 CS 一致：射线从屏幕中心（准星）射出。为了让画面和子弹方向对得上：
 ## - 枪管朝向「准星前方 converge_m 处」的那一点（参数见 data/weapons/weapons.json 的 viewmodel）（模型斜放在右下角，但枪口指向准星）
@@ -13,9 +13,9 @@ extends Node3D
 ## 拔出（从下方带旋转升起）、换弹（下沉并侧倾）、刀的挥砍。
 
 const HIP_POS: Vector3 = Vector3(0.19, -0.2, -0.42)    # 枪械模型在相机空间里的位置
-const KNIFE_POS: Vector3 = Vector3(0.17, -0.16, -0.3)  # 刀的位置
-const KNIFE_ROT_DEG: Vector3 = Vector3(18.0, 12.0, -28.0)
-const KNIFE_SCALE: float = 1.25
+const KNIFE_POS: Vector3 = Vector3(0.17, -0.18, -0.38) # 刀的位置
+const KNIFE_ROT_DEG: Vector3 = Vector3(24.0, 10.0, -20.0)
+const KNIFE_SCALE: float = 1.0
 const VM_SCALE: float = 0.78
 
 @export var look_path: NodePath = ^"../.."
@@ -41,6 +41,10 @@ var _last_look: Vector2 = Vector2.ZERO
 var _bob_phase: float = 0.0
 var _slash_left_s: float = 0.0
 var _slash_dir: float = 1.0
+var _alt_trigger: bool = false
+var _alt_press_queued: bool = false
+var _stab_left_s: float = 0.0
+var _inspect_left_s: float = 0.0
 
 
 func _ready() -> void:
@@ -98,6 +102,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_3: state.request_slot(3)
 			KEY_Q: state.request_quick_switch()
 			KEY_R: state.request_reload()
+			KEY_F: start_inspect()
 	elif event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event
 		match mb.button_index:
@@ -107,6 +112,10 @@ func _unhandled_input(event: InputEvent) -> void:
 					_press_queued = true
 				else:
 					_release_seen = true
+			MOUSE_BUTTON_RIGHT:
+				_alt_trigger = mb.pressed
+				if mb.pressed:
+					_alt_press_queued = true
 			MOUSE_BUTTON_WHEEL_DOWN:
 				if mb.pressed:
 					state.request_wheel(1)
@@ -126,10 +135,13 @@ func physics_step() -> bool:
 	if not _active():
 		_trigger = false
 		_press_queued = false
+		_alt_trigger = false
+		_alt_press_queued = false
 	if _release_seen:
 		state.release_trigger()
-	var fired: bool = state.tick(_trigger or _press_queued)
+	var fired: bool = state.tick(_trigger or _press_queued, _alt_trigger or _alt_press_queued)
 	_press_queued = false
+	_alt_press_queued = false
 	_release_seen = false
 	if fired:
 		_on_fire()
@@ -188,15 +200,28 @@ func _process(dt_s: float) -> void:
 		anim_pos = Vector3(0.0, -0.08 * dip, 0.0)
 		anim_rot = Vector3(-10.0 * dip, 0.0, 28.0 * dip)
 
-	# 刀挥砍
+	# 刀：轻击（左右交替的斜劈）、重击（蓄力后前刺）；检视（F）
 	var slash_rot: Vector3 = Vector3.ZERO
 	var slash_pos: Vector3 = Vector3.ZERO
 	if _slash_left_s > 0.0:
 		_slash_left_s = maxf(_slash_left_s - dt_s, 0.0)
 		var s: float = 1.0 - _slash_left_s / maxf(vm["slash_s"], 1e-6)
-		var arc: float = sin(PI * s)
-		slash_rot = Vector3(-25.0 * arc, 55.0 * (s - 0.5) * 2.0 * _slash_dir * arc, 30.0 * arc * _slash_dir)
-		slash_pos = Vector3(-0.12 * arc * _slash_dir, 0.03 * arc, -0.08 * arc)
+		var pose: Array = slash_pose(s, _slash_dir)
+		slash_pos = pose[0]
+		slash_rot = pose[1]
+	elif _stab_left_s > 0.0:
+		_stab_left_s = maxf(_stab_left_s - dt_s, 0.0)
+		var pose: Array = stab_pose(1.0 - _stab_left_s / maxf(vm["stab_s"], 1e-6))
+		slash_pos = pose[0]
+		slash_rot = pose[1]
+	if state.state != WeaponState.State.READY:
+		_inspect_left_s = 0.0
+	if _inspect_left_s > 0.0:
+		_inspect_left_s = maxf(_inspect_left_s - dt_s, 0.0)
+		var total_s: float = vm["inspect_knife_s"] if is_knife else vm["inspect_gun_s"]
+		var pose: Array = inspect_pose(1.0 - _inspect_left_s / maxf(total_s, 1e-6), is_knife)
+		slash_pos += pose[0]
+		slash_rot += pose[1]
 
 	var base_pos: Vector3 = KNIFE_POS if is_knife else HIP_POS
 	var base_basis: Basis = Basis.from_euler(KNIFE_ROT_DEG * PI / 180.0) if is_knife else aim_basis(vm["converge_m"])
@@ -219,13 +244,82 @@ func _show(id: String) -> void:
 		(_models[k] as Node3D).visible = k == id
 	_shown = id
 	_slash_left_s = 0.0
+	_stab_left_s = 0.0
+	_inspect_left_s = 0.0
+
+
+## 检视（F）：就绪时开始；开火、切枪、换弹都会打断。
+func start_inspect() -> void:
+	if cfg == null or not state.is_ready() or _slash_left_s > 0.0 or _stab_left_s > 0.0:
+		return
+	var is_knife: bool = int(state.weapons[state.current]["magazine"]) == 0
+	_inspect_left_s = cfg.viewmodel["inspect_knife_s"] if is_knife else cfg.viewmodel["inspect_gun_s"]
+
+
+## 关键帧插值：keys = [[t, 位置, 旋转(度)], …]，t 从 0 到 1 递增；段内用 smoothstep。返回 [位置, 旋转]。
+static func keyframes(p: float, keys: Array) -> Array:
+	p = clampf(p, 0.0, 1.0)
+	for i: int in range(1, keys.size()):
+		if p <= float(keys[i][0]):
+			var a: Array = keys[i - 1]
+			var b: Array = keys[i]
+			var u: float = smoothstep(0.0, 1.0, (p - float(a[0])) / maxf(float(b[0]) - float(a[0]), 1e-6))
+			return [(a[1] as Vector3).lerp(b[1], u), (a[2] as Vector3).lerp(b[2], u)]
+	return [keys[-1][1], keys[-1][2]]
+
+
+## 轻击：用刀刃切。dir = 1 正手从右上劈到左下，刃口（模型 -Y）转向左下（绕刀身轴 -45°）；
+## dir = -1 反手翻腕，刃口转向右上（+135°），从左下划回右上。首尾回到持刀姿势。
+static func slash_pose(s: float, dir: float) -> Array:
+	var roll: float = -45.0 if dir > 0.0 else 135.0
+	return keyframes(s, [
+		[0.0, Vector3.ZERO, Vector3.ZERO],
+		[0.18, Vector3(0.09 * dir, 0.07 * dir, 0.02), Vector3(10.0 * dir, -18.0 * dir, roll)],
+		[0.6, Vector3(-0.15 * dir, -0.08 * dir, -0.1), Vector3(-15.0 * dir, 30.0 * dir, roll)],
+		[1.0, Vector3.ZERO, Vector3.ZERO],
+	])
+
+
+## 重击：向后蓄力，再向前猛刺，收回。
+static func stab_pose(s: float) -> Array:
+	return keyframes(s, [
+		[0.0, Vector3.ZERO, Vector3.ZERO],
+		[0.35, Vector3(0.02, 0.04, 0.08), Vector3(-10.0, -8.0, 20.0)],
+		[0.55, Vector3(-0.08, 0.04, -0.24), Vector3(-26.0, 12.0, 20.0)],
+		[0.7, Vector3(-0.08, 0.04, -0.24), Vector3(-26.0, 12.0, 20.0)],
+		[1.0, Vector3.ZERO, Vector3.ZERO],
+	])
+
+
+## 检视：刀拿到面前亮出刀面，翻到另一面，再收回；枪侧过来展示右侧，再收回。
+static func inspect_pose(p: float, is_knife: bool) -> Array:
+	if is_knife:
+		return keyframes(p, [
+			[0.0, Vector3.ZERO, Vector3.ZERO],
+			[0.15, Vector3(-0.08, 0.05, -0.05), Vector3(-15.0, 60.0, -10.0)],
+			[0.45, Vector3(-0.08, 0.05, -0.05), Vector3(-10.0, 72.0, -10.0)],
+			[0.6, Vector3(-0.07, 0.06, -0.05), Vector3(-10.0, 72.0, 170.0)],
+			[0.85, Vector3(-0.07, 0.06, -0.05), Vector3(-15.0, 68.0, 180.0)],
+			[1.0, Vector3.ZERO, Vector3(0.0, 0.0, 360.0)],
+		])
+	return keyframes(p, [
+		[0.0, Vector3.ZERO, Vector3.ZERO],
+		[0.2, Vector3(-0.06, 0.04, 0.03), Vector3(5.0, 35.0, -30.0)],
+		[0.75, Vector3(-0.06, 0.05, 0.03), Vector3(8.0, 40.0, -35.0)],
+		[1.0, Vector3.ZERO, Vector3.ZERO],
+	])
 
 
 func _on_fire() -> void:
 	shots += 1
 	var is_knife: bool = int(state.weapons[state.current]["magazine"]) == 0
-	if is_knife:
+	_inspect_left_s = 0.0
+	if is_knife and state.last_fire_alt:
+		_stab_left_s = cfg.viewmodel["stab_s"]
+		_slash_left_s = 0.0
+	elif is_knife:
 		_slash_left_s = cfg.viewmodel["slash_s"]
+		_stab_left_s = 0.0
 		_slash_dir = -_slash_dir
 	else:
 		_kick = cfg.viewmodel["kick_m"]

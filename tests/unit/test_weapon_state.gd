@@ -12,6 +12,7 @@ func run_tests() -> void:
 	_test_fire_modes()
 	_test_ammo_and_reload()
 	_test_knife()
+	_test_knife_animation_poses()
 	_test_scene_wiring()
 
 
@@ -184,6 +185,39 @@ func _test_knife() -> void:
 			count += 1
 	ok("刀按住每 0.4 s 挥一次（1 s 内 3 次），实际 %d" % count, count == 3)
 	ok("刀不消耗弹药", s.ammo["knife"] == 0 and s.is_ready())
+	# 右键重击：每 1.0 s 一次，并标记为副攻击
+	var h: WeaponState = _make("knife")
+	var heavy: Array[int] = []
+	for i: int in range(1, 130):
+		if h.tick(false, true):
+			ok("重击标记为副攻击", h.last_fire_alt)
+			heavy.append(i)
+	ok("重击每 1.0 s（64 tick）一次：%s" % str(heavy), heavy == [1, 65, 129])
+	# 左右键同时按：左键优先
+	var both: WeaponState = _make("knife")
+	ok("左右键同时按时轻击优先", both.tick(true, true) and not both.last_fire_alt)
+	# 枪没有副攻击
+	var gun: WeaponState = _make("rifle")
+	var gun_alt: bool = false
+	for i: int in 64:
+		gun_alt = gun_alt or gun.tick(false, true)
+	ok("步枪右键不开火", not gun_alt)
+
+
+func _test_knife_animation_poses() -> void:
+	# 轻击 / 重击 / 检视的姿势首尾都回到持刀姿势；轻击左右交替方向相反
+	for pose: Array in [WeaponController.slash_pose(0.0, 1.0), WeaponController.slash_pose(1.0, 1.0),
+			WeaponController.stab_pose(0.0), WeaponController.stab_pose(1.0)]:
+		ok("动作首尾回到原位", (pose[0] as Vector3).is_zero_approx() and (pose[1] as Vector3).is_zero_approx())
+	var right: Array = WeaponController.slash_pose(0.2, 1.0)
+	var left: Array = WeaponController.slash_pose(0.2, -1.0)
+	ok("正手从右上起刀", (right[0] as Vector3).x > 0.0 and (right[0] as Vector3).y > 0.0)
+	ok("反手方向相反", is_equal_approx((left[0] as Vector3).x, -(right[0] as Vector3).x))
+	var thrust: Array = WeaponController.stab_pose(0.6)
+	ok("重击中段向前刺出（-Z）", (thrust[0] as Vector3).z < -0.2)
+	var ins_end: Array = WeaponController.inspect_pose(1.0, true)
+	ok("刀检视结束位置回到原位", (ins_end[0] as Vector3).is_zero_approx())
+	ok("刀检视中途翻面", absf((WeaponController.inspect_pose(0.7, true)[1] as Vector3).z) > 150.0)
 
 
 func _click(wc: WeaponController, pressed: bool) -> void:
@@ -228,6 +262,29 @@ func _test_controller_input(wc: WeaponController, root: Node) -> void:
 	ok("暂停时不开火", not wc.physics_step())
 	look.captured = true
 	ok("恢复后不会补开暂停时的那一下", not wc.physics_step())
+	# 检视：就绪时 F 开始，开火打断
+	_click(wc, false)
+	for i: int in 30:
+		wc.physics_step()
+	wc.start_inspect()
+	ok("就绪时可以检视", wc._inspect_left_s > 0.0)
+	_click(wc, true)
+	for i: int in 20:
+		wc.physics_step()
+	ok("开火打断检视", wc._inspect_left_s == 0.0)
+	_click(wc, false)
+	# 刀：右键重击触发前刺动画
+	wc.state.request_slot(3)
+	for i: int in 70:
+		wc.physics_step()
+	var rmb: InputEventMouseButton = InputEventMouseButton.new()
+	rmb.button_index = MOUSE_BUTTON_RIGHT
+	rmb.pressed = true
+	wc._unhandled_input(rmb)
+	ok("刀右键重击", wc.physics_step() and wc.state.last_fire_alt)
+	ok("重击触发前刺动画", wc._stab_left_s > 0.0 and wc._slash_left_s == 0.0)
+	rmb.pressed = false
+	wc._unhandled_input(rmb)
 
 
 func _test_scene_wiring() -> void:
