@@ -64,7 +64,7 @@ static func build(id: String) -> Node3D:
 			_box(root, Vector3(0.055, 0.05, 0.2), Vector3(0, 0.02, -0.38), _mat(WOOD, 0.0, 0.8))   # 护木
 			_box(root, Vector3(0.04, 0.16, 0.06), Vector3(0, -0.07, -0.16), dark, Vector3(-18, 0, 0))  # 弯弹匣
 			_box(root, Vector3(0.035, 0.1, 0.04), Vector3(0, -0.04, 0.02), dark, Vector3(15, 0, 0))   # 握把
-			_box(root, Vector3(0.045, 0.06, 0.24), Vector3(0, 0.0, 0.2), _mat(WOOD, 0.0, 0.8))     # 枪托
+			_box(root, Vector3(0.045, 0.06, 0.12), Vector3(0, 0.0, 0.13), _mat(WOOD, 0.0, 0.8))    # 枪托（缩短，避免伸出画面）
 			_box(root, Vector3(0.01, 0.03, 0.01), Vector3(0, 0.075, -0.62), dark)            # 准星
 			_muzzle(root, Vector3(0, 0.045, -0.69))
 		"pistol":

@@ -5,7 +5,8 @@ extends Node3D
 ##
 ## 输入：1 / 2 / 3 选槽位，Q 切到上一把，滚轮切换，左键开火（按住），R 换弹。
 
-const HIP_POS: Vector3 = Vector3(0.22, -0.22, -0.38)   # 模型在相机空间里的位置（表现参数，不是手感时长）
+const HIP_POS: Vector3 = Vector3(0.15, -0.15, -0.4)    # 模型在相机空间里的位置（表现参数，不是手感时长）
+const VM_SCALE: float = 0.62                           # 模型缩放
 const DRAW_DROP_M: float = 0.35                        # 拔出动画开始时模型在画面下方多远
 const KICK_M: float = 0.035                            # 开火时向后的位移
 const KICK_RECOVER_PER_S: float = 14.0
@@ -102,6 +103,7 @@ func _process(dt_s: float) -> void:
 	elif state.state == WeaponState.State.RELOADING:
 		drop = DRAW_DROP_M * 0.35
 	_kick = move_toward(_kick, 0.0, KICK_RECOVER_PER_S * KICK_M * dt_s)
+	m.scale = Vector3.ONE * VM_SCALE
 	m.position = HIP_POS + Vector3(0, -drop, _kick)
 	m.rotation_degrees = Vector3(_kick * 120.0, 0, 0)
 	_flash_left_s = maxf(_flash_left_s - dt_s, 0.0)
@@ -114,7 +116,7 @@ func _show(id: String) -> void:
 	_shown = id
 	var muzzle: Node3D = (_models[id] as Node3D).get_node_or_null("Muzzle") as Node3D
 	if muzzle != null and _flash != null:
-		_flash.position = HIP_POS + muzzle.position
+		_flash.position = HIP_POS + muzzle.position * VM_SCALE
 
 
 func _on_fire() -> void:
