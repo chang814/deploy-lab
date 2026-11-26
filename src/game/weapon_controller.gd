@@ -13,8 +13,8 @@ extends Node3D
 ## 拔出（从下方带旋转升起）、换弹（下沉并侧倾）、刀的挥砍。
 
 const HIP_POS: Vector3 = Vector3(0.19, -0.2, -0.42)    # 枪械模型在相机空间里的位置
-const KNIFE_POS: Vector3 = Vector3(0.17, -0.18, -0.38) # 刀的位置
-const KNIFE_ROT_DEG: Vector3 = Vector3(24.0, 10.0, -20.0)
+const KNIFE_POS: Vector3 = Vector3(0.2, -0.2, -0.36)  # 刀的位置（右下）
+const KNIFE_ROT_DEG: Vector3 = Vector3(8.0, 16.0, -12.0)   # 刀尖朝前偏向画面中心，略上扬，刃口朝下
 const KNIFE_SCALE: float = 1.0
 const VM_SCALE: float = 0.78
 
@@ -189,7 +189,8 @@ func _process(dt_s: float) -> void:
 	var anim_rot: Vector3 = Vector3.ZERO
 	if state.state == WeaponState.State.DRAWING:
 		var draw_s: float = float(state.weapons[_shown]["draw_s"])
-		var t: float = clampf(1.0 - (state.ready_at_s - state.now_s) / maxf(draw_s, 1e-6), 0.0, 1.0)
+		# 升起动画在拔出时长的前 draw_anim_fraction 内完成，之后端平等待可以开火（开火时刻不变）
+		var t: float = clampf((1.0 - (state.ready_at_s - state.now_s) / maxf(draw_s, 1e-6)) / maxf(vm["draw_anim_fraction"], 1e-6), 0.0, 1.0)
 		var k: float = pow(1.0 - t, 3.0)
 		anim_pos = Vector3(0.03 * k, -cfg.viewmodel["draw_drop_m"] * k, 0.0)
 		anim_rot = Vector3(-35.0 * k, 0.0, 20.0 * k)
@@ -274,8 +275,8 @@ static func slash_pose(s: float, dir: float) -> Array:
 	var roll: float = -45.0 if dir > 0.0 else 135.0
 	return keyframes(s, [
 		[0.0, Vector3.ZERO, Vector3.ZERO],
-		[0.18, Vector3(0.09 * dir, 0.07 * dir, 0.02), Vector3(10.0 * dir, -18.0 * dir, roll)],
-		[0.6, Vector3(-0.15 * dir, -0.08 * dir, -0.1), Vector3(-15.0 * dir, 30.0 * dir, roll)],
+		[0.2, Vector3(0.05 * dir, 0.05 * dir, 0.02), Vector3(8.0 * dir, -14.0 * dir, roll)],
+		[0.55, Vector3(-0.12 * dir, -0.05 * dir, -0.08), Vector3(-10.0 * dir, 24.0 * dir, roll)],
 		[1.0, Vector3.ZERO, Vector3.ZERO],
 	])
 
@@ -360,11 +361,11 @@ func _spawn_tracer(end: Vector3) -> void:
 		return
 	var tracer: MeshInstance3D = MeshInstance3D.new()
 	var mesh: BoxMesh = BoxMesh.new()
-	mesh.size = Vector3(0.012, 0.012, length)
+	mesh.size = Vector3(0.006, 0.006, length)
 	tracer.mesh = mesh
 	var mat: StandardMaterial3D = StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(1.0, 0.85, 0.45, 0.85)
+	mat.albedo_color = Color(1.0, 0.88, 0.55, 0.35)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	tracer.material_override = mat
 	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

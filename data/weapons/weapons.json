@@ -15,11 +15,12 @@
 		"bob_freq_per_m": 1.6,
 		"bob_x_m": 0.008,
 		"bob_y_m": 0.006,
-		"slash_s": 0.3,
-		"stab_s": 0.55,
+		"slash_s": 0.42,
+		"stab_s": 0.7,
+		"draw_anim_fraction": 0.55,
 		"inspect_knife_s": 3.2,
 		"inspect_gun_s": 2.6,
-		"tracer_s": 0.06
+		"tracer_s": 0.035
 	},
 	"weapons": [
 		{
