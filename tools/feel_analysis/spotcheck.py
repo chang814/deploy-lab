@@ -41,12 +41,16 @@ def decode(video: str, wanted: list[int]) -> dict[int, np.ndarray]:
     p = subprocess.Popen(["ffmpeg", "-v", "error", "-i", video, "-vf", f"select={expr}", "-fps_mode", "passthrough",
                           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
     out = {}
-    for n in sorted(set(wanted)):
-        buf = p.stdout.read(W * H * 3)
-        if len(buf) != W * H * 3:
-            raise SystemExit(f"{video} 第 {n} 帧读不到")
-        out[n] = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
-    p.wait()
+    try:
+        for n in sorted(set(wanted)):
+            buf = p.stdout.read(W * H * 3)
+            if len(buf) != W * H * 3:
+                raise SystemExit(f"{video} 第 {n} 帧读不到")
+            out[n] = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+    finally:
+        p.stdout.close()
+        if p.wait(timeout=60) != 0 and len(out) != len(set(wanted)):
+            raise SystemExit(f"ffmpeg 解码 {video} 失败（退出码 {p.returncode}）")
     return out
 
 
@@ -90,11 +94,13 @@ def main() -> None:
             ImageDraw.Draw(im).text((5, 113), f"{idx:02d} {r['item']} {video} s={s} swap={sw} f={f}", fill=(255, 255, 0))
             im.save(f"{a.out_dir}/{idx:02d}_{r['item']}_{video}.png")
             ammo.append((idx, np.concatenate([fr[n][AMMO] for n in (f - 2, f - 1, f, f + 1)], axis=1)))
-            lines.append((idx, r["item"], video, s, sw, f, len(jumps)))
+            pre = max(diffs[:sw - (s - 8) - 1]) if sw is not None and sw > s - 7 else None   # s−8 … swap−1 之间
+            lines.append((idx, r["item"], video, s, sw, f, len(jumps), pre))
     lines.sort()
-    print("序号 项 录像 s swap f 大跳变次数 swap−s f−swap")
-    for idx, item, video, s, sw, f, nj in lines:
-        print(idx, item, video, s, sw, f, nj, None if sw is None else sw - s, None if sw is None else f - sw)
+    print("序号 项 录像 s swap f 大跳变次数 swap−s f−swap 换枪前最大逐帧差")
+    for idx, item, video, s, sw, f, nj, pre in lines:
+        print(idx, item, video, s, sw, f, nj, None if sw is None else sw - s, None if sw is None else f - sw,
+              None if pre is None else f"{pre:.1f}")
     ammo.sort(key=lambda x: x[0])
     sheet = Image.new("RGB", (620, 60 * len(ammo)))
     dr = ImageDraw.Draw(sheet)

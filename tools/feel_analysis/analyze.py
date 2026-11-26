@@ -7,9 +7,10 @@
   所以不能用它数按键或判断左键状态
 
 步骤：
-1. 对齐：OBS 日志里的开录时刻（毫秒）给出录像第 0 帧的大致 unix 时间；在 ±ALIGN_SEARCH_S 内逐个试偏移，
-   取「物理模型」矛盾最少的那个（见 _classify）。最优偏移必须唯一（连成一段）；录像里**每一次**格子亮起都必须
-   在记录里找到开启它的按下，down / up 必须交替，否则整段录像作废
+1. 对齐：OBS 日志里的开录时刻（毫秒）给出录像第 0 帧的大致 unix 时间；在 ±ALIGN_SEARCH_S 内逐个试偏移。
+   每个偏移下，按输入显示层自己的点亮规则由记录推算各格子的亮灭时间段（predicted_spans），与录像里的亮起逐段对应
+   （_classify，开始与结束都要对上）；取矛盾最少的偏移，它必须唯一（连成一段）。对齐后仍有任何矛盾，或某个键的
+   down / up 没有交替，整段录像作废
 2. 逐次切枪：遍历记录里的切枪键按下，从人工声明的初始武器（--initial）开始推算武器。触发键必须有**自己的**
    格子亮起（不是被合并进上一次亮起的），起点 s = 那一次亮起的帧
 3. 终点 f：s 之后、下一次切枪按键之前的第一声枪响（音量从低于到不低于 AUDIO_SHOT_MIN），在它之前
@@ -58,9 +59,12 @@ AUDIO_SHOT_MIN = 2500       # 枪声的音量下限（实测：枪声 3800–145
 AV_MIN_LAG, AV_MAX_LAG = 2, 7   # 枪声开始相对火光开始的延迟窗口（帧）；第一批 33 次实测 3–6（另有 1 次 2）
 ALIGN_SEARCH_S = 0.15       # 对齐时，在 OBS 开录时刻附近搜索的范围
 ALIGN_STEP_S = 0.002
-MATCH_EARLY_S = 0.03        # 对齐后，格子亮起最多比按下早这么多（第一批实测最早 −19 ms）
-MATCH_LATE_S = 0.07         # 对齐后，格子亮起最多比按下晚这么多（第一批实测最晚 +47 ms）
-INSIDE_MARGIN_S = 0.03      # 按下前这么久格子已经亮着，才算「并进已有的亮起」
+MATCH_EARLY_S = 0.03        # 对齐后，录像里的亮起 / 熄灭最多比推算的早这么多（第一批实测见报告）
+MATCH_LATE_S = 0.07         # 对齐后，录像里的亮起 / 熄灭最多比推算的晚这么多
+MIN_LIT_S = 0.10            # 与 tools/input_overlay/overlay_state.py 的 MIN_LIT_S 一致（测试会核对）
+WHEEL_LIT_S = 0.10          # 与 overlay_state.py 的 WHEEL_FLASH_S 一致
+MERGE_GAP_S = 0.025         # 两段点亮间隔不到这么久（约 1.5 帧），录像里分辨不出，按一段处理
+HEAD_SKIP_S = 0.10          # 录像开头这么久内开始的点亮段不比较
 MIN_PAIRS = 3
 MAX_FRAME_T_ERR_S = 0.0005  # 特征文件里第 i 帧的时间必须是 i / fps
 
@@ -175,37 +179,72 @@ def is_press(event: str) -> bool:
     return event in ("down", "wheel")
 
 
-def _classify(frames: list[Frame], fps: float, presses: list[Press]) -> tuple[int, int, list[str]]:
-    """按「物理模型」给已换算到录像时间的按下分类，返回 (认领了亮起的按下数, 矛盾数, 矛盾说明)。
+def predicted_spans(presses: list[Press], key: str, end_t: float) -> list[tuple[float, float, list[Press]]]:
+    """按输入显示层的点亮规则（tools/input_overlay/overlay_state.py），由记录推出某个格子应当亮着的时间段。
 
-    一次按下发生时，如果同一格**之前**就亮着（按下前 INSIDE_MARGIN_S 那一帧已亮），它被并进这次亮起（merged）；
-    否则它必须开启一次新的亮起：认领 [按下 − MATCH_EARLY_S, 按下 + MATCH_LATE_S] 内同键的一次亮起（shown），
-    找不到就是漏显示（missing）。录像里没有被任何按下认领的亮起 = 记录里缺了这次按下。
+    规则：按住期间亮着；每次按下之后至少亮 MIN_LIT_S（滚轮没有松开，每次亮 WHEEL_LIT_S）。重叠或间隔
+    不到 MERGE_GAP_S（录像里分辨不出）的时间段合成一段。返回 [(开始, 结束, 这一段里的按下)]，第一个按下开启这一段。
+    """
+    raw: list[tuple[float, float, Press]] = []
+    evs = [p for p in presses if p.key == key]
+    for i, p in enumerate(evs):
+        if p.event == "wheel":
+            raw.append((p.t, p.t + WHEEL_LIT_S, p))
+        elif p.event == "down":
+            up = next((q.t for q in evs[i + 1:] if q.event == "up"), math.inf)
+            raw.append((p.t, max(up, p.t + MIN_LIT_S), p))
+    spans: list[tuple[float, float, list[Press]]] = []
+    for a, b, p in sorted(raw, key=lambda x: x[0]):
+        if spans and a <= spans[-1][1] + MERGE_GAP_S:
+            s0, s1, ps = spans[-1]
+            spans[-1] = (s0, max(s1, b), ps + [p])
+        else:
+            spans.append((a, b, [p]))
+    return [(a, min(b, end_t), ps) for a, b, ps in spans]
+
+
+def _classify(frames: list[Frame], fps: float, presses: list[Press]) -> tuple[int, int, list[str]]:
+    """把「由记录推出的点亮时间段」与「录像里看到的点亮时间段」逐段对应，返回 (对上的段数, 矛盾数, 矛盾说明)。
+
+    一段对上 = 开始时刻之差在 [−MATCH_EARLY_S, +MATCH_LATE_S] 内，且结束时刻之差也在这个范围内
+    （结束超出录像的不比）。对上的段：第一个按下为 shown，并拥有这次亮起；段里其余按下为 merged。
+    推出的段在录像里没有 → 这一段的按下都是 missing；录像里的段推不出来 → 记录缺了按下。
+    录像开头 HEAD_SKIP_S 内开始的段不比较（第 0 帧之前的状态看不到）。
     """
     n = len(frames)
+    end_t = n / fps
     owned, bad, notes = 0, 0, []
+    for p in presses:
+        p.onset, p.status = None, ""
     for k in OVERLAY_KEYS:
-        ons = onsets(frames, k)
+        seen = [(i, lit_until(frames, k, i)) for i in onsets(frames, k)]
         taken: set[int] = set()
-        for p in (q for q in presses if q.key == k and is_press(q.event)):
-            p.onset, p.status = None, ""
-            before = int(math.floor((p.t - INSIDE_MARGIN_S) * fps))
-            if 0 <= before < n and frames[before].lit[k]:
-                p.status = "merged"
+        for a, b, ps in predicted_spans(presses, k, end_t):
+            if a < HEAD_SKIP_S:
+                for p in ps:
+                    p.status = "merged"
                 continue
-            cand = [i for i in ons if i not in taken and -MATCH_EARLY_S <= frames[i].t - p.t <= MATCH_LATE_S]
-            if cand:
-                p.onset = min(cand, key=lambda i: abs(frames[i].t - p.t))
-                taken.add(p.onset)
-                p.status = "shown"
-                owned += 1
-            else:
-                p.status = "missing"
+            cand = [(i, e) for i, e in seen if i not in taken and -MATCH_EARLY_S <= frames[i].t - a <= MATCH_LATE_S]
+            if not cand:
+                for p in ps:
+                    p.status = "missing"
                 bad += 1
-        for i in ons:
+                notes.append(f"按键记录里 {a:.2f}s 的 {k} 应当亮起，录像里没有")
+                continue
+            i, e = min(cand, key=lambda x: abs(frames[x[0]].t - a))
+            taken.add(i)
+            seen_end = e / fps if e < n else math.inf
+            if b < end_t - MATCH_LATE_S and not -MATCH_EARLY_S <= seen_end - b <= MATCH_LATE_S:
+                bad += 1
+                notes.append(f"{frames[i].t:.2f}s 的 {k}：按记录应亮到 {b:.2f}s，录像里亮到 {seen_end:.2f}s")
+            ps[0].onset, ps[0].status = i, "shown"
+            for p in ps[1:]:
+                p.status = "merged"
+            owned += 1
+        for i, _ in seen:
             if i not in taken:
                 bad += 1
-                notes.append(f"{frames[i].t:.2f}s 的 {k} 亮起在按键记录里没有对应的按下")
+                notes.append(f"{frames[i].t:.2f}s 的 {k} 亮起在按键记录里推不出来")
     return owned, bad, notes
 
 

@@ -83,6 +83,24 @@ class TrackerTest(unittest.TestCase):
         self.assertEqual(an.track_weapons(["Q"], ("ak", "glock"))[0], ("ak", "glock"))
 
 
+class OverlayRuleTest(unittest.TestCase):
+    def test_constants_match_input_overlay(self):
+        # 推算点亮时间段用的规则必须与输入显示层一致
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "input_overlay", "overlay_state.py")
+        spec = importlib.util.spec_from_file_location("overlay_state", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(an.MIN_LIT_S, mod.MIN_LIT_S)
+        self.assertEqual(an.WHEEL_LIT_S, mod.WHEEL_FLASH_S)
+
+    def test_spans_follow_overlay_rule(self):
+        ps = [an.Press(1.0, "Q", "down"), an.Press(1.02, "Q", "up"), an.Press(1.05, "Q", "down"),
+              an.Press(1.3, "Q", "up"), an.Press(2.0, "Q", "down"), an.Press(2.01, "Q", "up")]
+        spans = an.predicted_spans(ps, "Q", 10.0)
+        self.assertEqual([(round(a, 3), round(b, 3), len(x)) for a, b, x in spans], [(1.0, 1.3, 2), (2.0, 2.1, 1)])
+
+
 class ArgsTest(unittest.TestCase):
     def test_parse_initial(self):
         self.assertEqual(an.parse_initial("knife,ak"), ("knife", "ak"))
@@ -178,7 +196,7 @@ class TimelineTest(unittest.TestCase):
         # 第 2 轮反例：录像里亮了一次 3，记录里没有 → 整段录像作废
         fr = make(600, dict(self.P, **{"3": [(250, 256), (550, 556)]}))
         tl = timeline(fr, self.P)
-        self.assertTrue(any("没有对应的按下" in p for p in tl.problems))
+        self.assertTrue(any("推不出来" in p for p in tl.problems))
 
     def test_press_inside_lit_period_is_merged(self):
         tl = timeline(make(600, self.P), self.P, extra=[(103 / FPS, "1", "down"), (104 / FPS, "1", "up")])
@@ -208,11 +226,42 @@ class TimelineTest(unittest.TestCase):
         self.assertFalse(any(c.valid for c in an.analyze(fr, FPS, "E1", 0.1, ("glock", "ak"), tl)))
 
     def test_codex_r3_unshown_press_before_onset_is_missing(self):
-        # 第 3 轮反例：R 在 198 帧按下、199 帧松开，完全没显示；200 帧另一次 R 才亮起。必须有一次是漏显示
-        # （另有 self.P 的按键把对齐钉住；只有这两次 R 时，「显示延迟 35 ms」也能自洽地解释它们）
+        # 第 3 轮反例的变体：R 在 190 帧按下、191 帧松开（按显示层规则应亮到 196 帧），录像里没亮；
+        # 200 帧另一次 R 才亮起 → 漏显示，整段作废。
+        # （原反例 198 帧按下：按规则应在 198 亮起，录像 200 才亮，差 33 ms，在实测显示延迟范围内，
+        #   两次按下合成一段，与「延迟 33 ms」自洽，无法也不必判为漏显示）
         p = dict(self.P, R=[(200, 210)])
-        tl = timeline(make(600, p), p, [(198 / FPS, "R", "down"), (199 / FPS, "R", "up")])
+        tl = timeline(make(600, p), p, [(190 / FPS, "R", "down"), (191 / FPS, "R", "up")])
         self.assertIn("missing", [p.status for p in tl.presses if p.key == "R" and p.event == "down"])
+        self.assertTrue(any("录像里没有" in x for x in tl.problems))
+
+    def test_codex_r4_press_after_lit_period_ended_is_missing(self):
+        # 第 4 轮反例：R 显示于 [200,206)，第 207 帧又按下、208 帧松开，录像里没亮 → 不能算合并
+        p = dict(self.P, R=[(200, 206)])
+        tl = timeline(make(600, p), p, [(207 / FPS, "R", "down"), (208 / FPS, "R", "up")])
+        # 间隔只有 1 帧，按规则与前一段合成 [200,213)；录像里 206 就熄灭了 → 结束对不上，整段作废
+        self.assertTrue(any("应亮到" in x for x in tl.problems), tl.problems)
+        # 间隔拉开到 4 帧（第 210 帧按下）：单独成段，录像里没有 → 漏显示
+        tl = timeline(make(600, p), p, [(210 / FPS, "R", "down"), (211 / FPS, "R", "up")])
+        self.assertEqual([x.status for x in tl.presses if x.key == "R" and x.event == "down"], ["shown", "missing"])
+        self.assertTrue(any("录像里没有" in x for x in tl.problems))
+
+    def test_codex_r4_fast_double_press_is_merged(self):
+        # 第 4 轮反例：F 显示于 [30,38)，记录两次按住 [30,31)、[31.5,32)。按显示层规则两次合成一段，
+        # 第二次是合并，对齐不能被带偏
+        p = dict(self.P, F=[(30, 38)])
+        log = dict(self.P, F=[(30, 31)])
+        tl = timeline(make(600, p), log, [(31.5 / FPS, "F", "down"), (32 / FPS, "F", "up")])
+        self.assertEqual(tl.problems, [])
+        self.assertAlmostEqual(tl.offset, -DISPLAY_LAG, delta=0.004)
+        self.assertEqual([x.status for x in tl.presses if x.key == "F" and x.event == "down"], ["shown", "merged"])
+
+    def test_lit_period_end_must_match(self):
+        # 记录说 1 按住到 300 帧，录像里 1 只亮到 106 帧 → 结束对不上
+        p = dict(self.P)
+        log = dict(self.P, **{"1": [(100, 300), (400, 406)]})
+        tl = timeline(make(600, p), log)
+        self.assertTrue(any("应亮到" in x for x in tl.problems))
 
     def test_double_down_is_inconsistent(self):
         tl = timeline(make(600, self.P), self.P, extra=[(103 / FPS, "1", "down")])
@@ -281,8 +330,8 @@ class AnalyzeTest(Base):
 
     def test_codex_r3_unshown_press_invalidates_cycle(self):
         overlay = {"R": [(200, 210)]}
-        cs = self.run_cycle(presses=overlay, log_extra=[(198 / FPS, "R", "down"), (199 / FPS, "R", "up")])
-        self.invalid(cs[0], "没有显示")
+        cs = self.run_cycle(presses=overlay, log_extra=[(190 / FPS, "R", "down"), (191 / FPS, "R", "up")])
+        self.invalid(cs[0], "整段录像作废")
 
     def test_left_released_before_shot_is_invalid(self):
         cs = self.run_cycle(presses={"L": [(150, 200)]})
@@ -332,7 +381,7 @@ class AnalyzeTest(Base):
 
     def test_missing_display_of_left_button_is_invalid(self):
         cs = self.run_cycle(log_extra=[(250 / FPS, "R", "down"), (252 / FPS, "R", "up")])
-        self.invalid(cs[0], "没有显示")
+        self.invalid(cs[0], "整段录像作废")
 
     def test_whole_video_rejected_on_timeline_problem(self):
         p = dict(self.BASE)
