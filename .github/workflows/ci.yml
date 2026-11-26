@@ -75,10 +75,14 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: 安装分析工具依赖（版本固定）
+        run: python -m pip install --disable-pip-version-check "numpy==2.4.6"
+
       - name: Python 测试（与平台无关）
         run: |
           python -I -B -m unittest discover -s tools/input_overlay -p "test_*.py" -v
           python -I -B -m unittest discover -s spikes/raw-input/tools -p "test_compare_runs.py" -v
+          python -I -B -m unittest discover -s tools/feel_analysis -p "test_*.py" -v
 
   windows:
     name: Windows（Windows 专用 Python 测试）

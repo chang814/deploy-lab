@@ -35,5 +35,30 @@ class SaturatedOrangeTest(unittest.TestCase):
         self.assertEqual(ft.saturated_orange(fr), 20)
 
 
+class SpecTest(unittest.TestCase):
+    def info(self, **v):
+        video = {"width": 1724, "height": 1080, "r_frame_rate": "60/1", "avg_frame_rate": "60/1",
+                 "start_time": "0.000000", "nb_frames": "3649"}
+        video.update(v.pop("video", {}))
+        audio = v.pop("audio", {"start_time": "0.000000"})
+        return {"video": video, "audio": audio}
+
+    def test_calibrated_recording_passes(self):
+        self.assertEqual(ft.check_spec(self.info()), [])
+
+    def test_other_resolution_rejected(self):
+        self.assertTrue(any("分辨率" in p for p in ft.check_spec(self.info(video={"width": 431, "height": 270}))))
+
+    def test_variable_frame_rate_rejected(self):
+        p = ft.check_spec(self.info(video={"avg_frame_rate": "20940000/737311"}))
+        self.assertTrue(any("恒定" in x for x in p))
+
+    def test_missing_audio_rejected(self):
+        self.assertTrue(any("音轨" in p for p in ft.check_spec(self.info(audio=None))))
+
+    def test_audio_offset_rejected(self):
+        self.assertTrue(any("起始时间" in p for p in ft.check_spec(self.info(audio={"start_time": "0.021000"}))))
+
+
 if __name__ == "__main__":
     unittest.main()

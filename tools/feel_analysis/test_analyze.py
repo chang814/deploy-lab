@@ -1,4 +1,4 @@
-"""analyze.py 的测试（合成帧序列，不需要录像）。
+"""analyze.py 的测试（合成帧序列，不需要录像）。包含 GPT 审查给出的反例。
 
 运行：python -I -B -m unittest discover -s tools/feel_analysis -p "test_*.py"
 """
@@ -12,6 +12,7 @@ import analyze as an  # noqa: E402
 
 KEYS = ["1", "2", "3", "Q", "F", "wheel", "L", "R"]
 AV_LAG = 4  # 合成数据里枪声比火光晚的帧数（实测 3–5）
+FPS = 60.0
 
 
 def make(n: int, presses: dict[str, list[tuple[int, int]]], flashes: list[tuple[int, int]] = (),
@@ -25,8 +26,14 @@ def make(n: int, presses: dict[str, list[tuple[int, int]]], flashes: list[tuple[
         lit = {k: any(a <= i < b for a, b in presses.get(k, [])) for k in KEYS}
         flash = flash_value if any(a <= i < b for a, b in flashes) else 0
         audio = 9000.0 if any(a <= i < b for a, b in shots) else 100.0
-        frames.append(an.Frame(i / 60, lit, flash, audio))
+        frames.append(an.Frame(i / FPS, lit, flash, audio))
     return frames
+
+
+def vlog_from(presses: dict[str, list[tuple[int, int]]], extra: list[tuple[float, str]] = ()) -> list[tuple[float, str]]:
+    """由合成按键生成「已换算成录像时间」的按键记录：每次亮起对应一次按下。"""
+    out = [(a / FPS, k) for k, spans in presses.items() if k in an.SWITCH_KEYS for a, _ in spans]
+    return sorted(out + list(extra))
 
 
 class TrackerTest(unittest.TestCase):
@@ -69,94 +76,122 @@ class InitialArgTest(unittest.TestCase):
 
 class FlashTest(unittest.TestCase):
     def test_detects_first_flash_frame(self):
-        fr = make(200, {}, flashes=[(100, 110)])
-        self.assertEqual(an.find_flash(fr, 10, 200), 100)
+        self.assertEqual(an.find_flash(make(200, {}, flashes=[(100, 110)]), 10, 200), 100)
 
     def test_small_glock_flash_detected(self):
-        fr = make(200, {}, flashes=[(100, 110)], flash_value=600)
-        self.assertEqual(an.find_flash(fr, 10, 200), 100)
+        self.assertEqual(an.find_flash(make(200, {}, flashes=[(100, 110)], flash_value=600), 10, 200), 100)
 
     def test_flash_without_gunshot_is_not_a_shot(self):
-        fr = make(200, {}, flashes=[(100, 110)], sound=False)
-        self.assertIsNone(an.find_flash(fr, 10, 200))
+        self.assertIsNone(an.find_flash(make(200, {}, flashes=[(100, 110)], sound=False), 10, 200))
 
-    def test_gunshot_without_flash_returns_none(self):
+    def test_gunshot_without_flash(self):
         fr = make(200, {}, extra_audio=[(100, 110)])
         self.assertIsNone(an.find_flash(fr, 10, 200))
         self.assertTrue(an.has_gunshot(fr, 10, 200))
 
-    def test_silent_bright_frames_then_real_shot(self):
-        # 先有一段无声的橙色（例如别的特效），之后才是真正的开枪
-        fr = make(300, {}, flashes=[(60, 70), (200, 210)])
-        fr = [an.Frame(x.t, x.lit, x.flash, 100.0 if i < 150 else x.audio) for i, x in enumerate(fr)]
-        self.assertEqual(an.find_flash(fr, 10, 300), 200)
+    def test_single_frame_orange_is_ignored(self):
+        fr = make(200, {}, flashes=[(100, 101)])
+        self.assertIsNone(an.find_flash(fr, 10, 200))
 
-    def test_gunshot_too_late_does_not_confirm(self):
-        fr = make(300, {}, flashes=[(100, 105)], sound=False, extra_audio=[(100 + an.AV_WINDOW_FRAMES + 5, 140)])
+    def test_codex_orange_effect_cannot_borrow_later_gunshot(self):
+        # 第 690 帧无声橙色特效，第 700 帧真实火光，第 704 帧枪声：应返回 700，而不是 690
+        fr = make(800, {}, flashes=[(690, 695), (700, 710)])
+        fr = [an.Frame(x.t, x.lit, x.flash, 9000.0 if 704 <= i < 714 else 100.0) for i, x in enumerate(fr)]
+        self.assertEqual(an.find_flash(fr, 10, 800), 700)
+
+    def test_codex_pairing_does_not_cross_end(self):
+        # 第 695 帧橙色、第 700 帧下一次切枪、第 704 帧枪声：不能确认前一个周期
+        fr = make(800, {}, flashes=[(695, 700)], sound=False, extra_audio=[(704, 714)])
+        self.assertIsNone(an.find_flash(fr, 10, 700))
+
+    def test_gunshot_already_ongoing_is_not_an_onset(self):
+        # 枪声在火光前就已经持续（例如连射中途），没有新的枪声开始，不能确认
+        fr = make(300, {}, flashes=[(100, 110)], sound=False, extra_audio=[(90, 130)])
         self.assertIsNone(an.find_flash(fr, 10, 300))
 
-    def test_flash_must_be_before_end(self):
-        fr = make(200, {}, flashes=[(150, 160)])
-        self.assertIsNone(an.find_flash(fr, 10, 120))
-
     def test_below_threshold_ignored(self):
-        fr = make(200, {}, flashes=[(100, 110)], flash_value=an.FLASH_MIN - 1)
-        self.assertIsNone(an.find_flash(fr, 10, 200))
+        self.assertIsNone(an.find_flash(make(200, {}, flashes=[(100, 110)], flash_value=an.FLASH_MIN - 1), 10, 200))
 
 
 class AnalyzeTest(unittest.TestCase):
-    def cycle(self, item="A", initial=(None, None), **kw):
-        presses = {"3": [(10, 16)], "1": [(100, 106)], "L": [(150, 320)]}
-        presses.update(kw.pop("presses", {}))
-        fr = make(400, presses, flashes=kw.pop("flashes", [(300, 340)]), **kw)
-        return an.analyze(fr, 60.0, item, 0.1, initial)
+    BASE = {"3": [(10, 16)], "1": [(100, 106)], "L": [(150, 320)]}
+
+    def run_cycle(self, item="A", initial=(None, None), presses=None, flashes=((300, 340),), vlog="auto",
+                  log_extra=(), **kw):
+        p = dict(self.BASE)
+        p.update(presses or {})
+        fr = make(400, p, flashes=list(flashes), **kw)
+        log = vlog_from(p, log_extra) if vlog == "auto" else vlog
+        return an.analyze(fr, FPS, item, 0.1, initial, log)
 
     def test_valid_cycle_duration(self):
-        cs = self.cycle()
+        cs = self.run_cycle()
         self.assertEqual(len(cs), 1)
         self.assertTrue(cs[0].valid, cs[0].reason)
-        self.assertAlmostEqual(cs[0].duration_s, 200 / 60 * 0.1)
+        self.assertAlmostEqual(cs[0].duration_s, 200 / FPS * 0.1)
 
     def test_left_held_before_trigger_is_invalid(self):
-        cs = self.cycle(presses={"L": [(90, 320)]})
+        cs = self.run_cycle(presses={"L": [(90, 320)]})
         self.assertFalse(cs[0].valid)
         self.assertIn("左键已经按着", cs[0].reason)
 
     def test_left_pressed_late_is_invalid(self):
-        cs = self.cycle(presses={"L": [(295, 320)]})
+        cs = self.run_cycle(presses={"L": [(295, 320)]})
         self.assertFalse(cs[0].valid)
         self.assertIn("按晚", cs[0].reason)
 
-    def test_no_left_before_flash_is_invalid(self):
-        cs = self.cycle(presses={"L": [(330, 360)]})
+    def test_codex_early_tap_does_not_hide_late_press(self):
+        # 先轻点左键 [150,156)，很晚才再按住 [296,340)：开火时的这次按住只早 4 帧，应作废
+        cs = self.run_cycle(presses={"L": [(150, 156), (296, 340)]})
         self.assertFalse(cs[0].valid)
+        self.assertIn("按晚", cs[0].reason)
+
+    def test_left_released_before_shot_is_invalid(self):
+        cs = self.run_cycle(presses={"L": [(150, 200)]})
+        self.assertFalse(cs[0].valid)
+        self.assertIn("没有按着", cs[0].reason)
 
     def test_wrong_direction_is_invalid(self):
-        cs = self.cycle(presses={"3": [], "2": [(10, 16)]})
+        cs = self.run_cycle(presses={"3": [], "2": [(10, 16)]})
         self.assertFalse(cs[0].valid)
         self.assertIn("方向", cs[0].reason)
 
     def test_unknown_start_is_invalid_unless_declared(self):
-        cs = self.cycle(presses={"3": []})
-        self.assertFalse(cs[0].valid)
-        cs2 = self.cycle(presses={"3": []}, initial=("knife", "ak"))
-        self.assertTrue(cs2[0].valid, cs2[0].reason)
+        self.assertFalse(self.run_cycle(presses={"3": []})[0].valid)
+        cs = self.run_cycle(presses={"3": []}, initial=("knife", "ak"))
+        self.assertTrue(cs[0].valid, cs[0].reason)
 
     def test_no_shot_is_invalid(self):
-        cs = self.cycle(flashes=[])
+        cs = self.run_cycle(flashes=())
         self.assertFalse(cs[0].valid)
         self.assertIn("没有开枪", cs[0].reason)
 
     def test_gunshot_but_no_flash_reason(self):
-        cs = self.cycle(flashes=[], extra_audio=[(300, 310)])
+        cs = self.run_cycle(flashes=(), extra_audio=[(300, 310)])
+        self.assertIn("没有找到与之配对的火光", cs[0].reason)
+
+    def test_without_key_log_is_invalid(self):
+        cs = self.run_cycle(vlog=None)
         self.assertFalse(cs[0].valid)
-        self.assertIn("没有找到对应的火光", cs[0].reason)
+        self.assertIn("按键记录", cs[0].reason)
+
+    def test_codex_merged_double_press_is_invalid(self):
+        # 两次快速按 1 合成一次亮起：记录里在亮起期间有两次按下
+        cs = self.run_cycle(log_extra=[(103 / FPS, "1")])
+        self.assertFalse(cs[0].valid)
+        self.assertIn("2 次按下", cs[0].reason)
+
+    def test_codex_key_missing_from_video_is_invalid(self):
+        # 记录里有一次按 2，录像里没有亮起：武器推算不可靠
+        cs = self.run_cycle(log_extra=[(50 / FPS, "2")])
+        self.assertFalse(cs[0].valid)
+        self.assertIn("没有亮起", cs[0].reason)
 
     def test_e2_with_declared_initial_state(self):
-        presses = {"Q": [(100, 106)], "L": [(150, 320)]}
-        fr = make(400, presses, flashes=[(300, 340)])
-        self.assertTrue(an.analyze(fr, 60.0, "E2", 0.1, ("ak", "glock"))[0].valid)
-        self.assertFalse(an.analyze(fr, 60.0, "E2", 0.1)[0].valid)
+        p = {"Q": [(100, 106)], "L": [(150, 320)]}
+        fr = make(400, p, flashes=[(300, 340)])
+        self.assertTrue(an.analyze(fr, FPS, "E2", 0.1, ("ak", "glock"), vlog_from(p))[0].valid)
+        self.assertFalse(an.analyze(fr, FPS, "E2", 0.1, (None, None), vlog_from(p))[0].valid)
 
     def test_summary(self):
         cs = [an.Cycle("A", 0, valid=True, duration_s=v) for v in (1.0, 1.02, 1.01)] + [an.Cycle("A", 0)]
@@ -164,6 +199,21 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual(s["samples"], 3)
         self.assertAlmostEqual(s["median_s"], 1.01)
         self.assertAlmostEqual(s["max_dev_s"], 0.01)
+
+
+class AlignTest(unittest.TestCase):
+    def test_align_recovers_offset(self):
+        presses = {"1": [(100, 106), (400, 406)], "3": [(250, 256)], "Q": [(500, 506)]}
+        fr = make(600, presses)
+        true_start = 1_800_000_000.437
+        log = [(true_start + t + 0.008, k) for t, k in vlog_from(presses)]  # 记录比画面早 8 ms
+        start, pairs = an.align_log(fr, log, 1_800_000_000.0)
+        self.assertGreaterEqual(pairs, 3)
+        self.assertAlmostEqual(start, true_start + 0.008, places=3)
+
+    def test_log_in_video_window(self):
+        log = [(99.0, "1"), (100.5, "2"), (200.0, "3")]
+        self.assertEqual(an.log_in_video(log, 100.0, 600, 60.0), [(0.5, "2")])
 
 
 if __name__ == "__main__":

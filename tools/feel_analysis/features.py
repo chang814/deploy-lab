@@ -34,13 +34,54 @@ FLASH_REGION = (300 / 1724, 150 / 1080, 1.0, 970 / 1080)   # 左、上、右、�
 FLASH_R_MIN, FLASH_RB_DIFF_MIN, FLASH_G_MIN = 235, 150, 90
 
 
-def probe(video: str) -> tuple[int, int, float]:
+# 已校准的录像规格：输入显示层格子坐标与火光阈值只在这个规格下验证过，其他规格一律拒绝
+CALIBRATED = {"width": 1724, "height": 1080, "fps": 60.0}
+MAX_START_SKEW_S = 0.001     # 音视频起始时间差上限
+MAX_FRAME_SHORTFALL = 1      # 实际解出的帧数最多比容器记录少这么多帧
+
+
+def _rate(text: str) -> float:
+    num, den = text.split("/")
+    return float(num) / float(den) if float(den) else 0.0
+
+
+def probe_streams(video: str) -> dict:
+    """读取视频与音频流的规格信息。"""
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate",
-         "-of", "json", video], capture_output=True, check=True, text=True).stdout
-    s = json.loads(out)["streams"][0]
-    num, den = s["avg_frame_rate"].split("/")
-    return int(s["width"]), int(s["height"]), float(num) / float(den)
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,width,height,r_frame_rate,avg_frame_rate,start_time,nb_frames", "-of", "json", video],
+        capture_output=True, check=True, text=True).stdout
+    info = {"video": None, "audio": None}
+    for s in json.loads(out)["streams"]:
+        if s.get("codec_type") in info and info[s["codec_type"]] is None:
+            info[s["codec_type"]] = s
+    return info
+
+
+def check_spec(info: dict) -> list[str]:
+    """不符合已校准规格的问题列表；空列表表示可以分析。"""
+    v, a = info.get("video"), info.get("audio")
+    if v is None:
+        return ["没有视频流"]
+    problems = []
+    size = (int(v["width"]), int(v["height"]))
+    if size != (CALIBRATED["width"], CALIBRATED["height"]):
+        problems.append(f"分辨率 {size[0]}x{size[1]} 未校准（已校准 {CALIBRATED['width']}x{CALIBRATED['height']}）")
+    r, avg = _rate(v["r_frame_rate"]), _rate(v["avg_frame_rate"])
+    if abs(r - CALIBRATED["fps"]) > 1e-6 or abs(avg - r) > 1e-6:
+        problems.append(f"不是恒定 {CALIBRATED['fps']:g} fps（r={r:g}，avg={avg:g}）")
+    if a is None:
+        problems.append("没有音轨（需要用枪声确认开枪）")
+    else:
+        skew = abs(float(v.get("start_time") or 0) - float(a.get("start_time") or 0))
+        if skew > MAX_START_SKEW_S:
+            problems.append(f"音视频起始时间相差 {skew * 1000:.1f} ms")
+    return problems
+
+
+def probe(video: str) -> tuple[int, int, float]:
+    v = probe_streams(video)["video"]
+    return int(v["width"]), int(v["height"]), _rate(v["avg_frame_rate"])
 
 
 def _frames(video: str, vf: str, w: int, h: int):
@@ -120,12 +161,19 @@ def main() -> None:
     ap.add_argument("--cell-step", type=float, default=DEFAULT_CELL_STEP)
     a = ap.parse_args()
 
+    info = probe_streams(a.video)
+    problems = check_spec(info)
+    if problems:
+        sys.exit("拒绝分析：" + "；".join(problems))
     w, h, fps = probe(a.video)
     lit = overlay_lit(a.video, a.overlay_x, a.cell_step, a.overlay_y)
     flash = flash_counts(a.video, w, h)
-    n = min(len(lit), len(flash))
-    if n == 0:
-        sys.exit("没有读到任何帧")
+    if len(lit) != len(flash):
+        sys.exit(f"拒绝分析：两次解码的帧数不一致（{len(lit)} / {len(flash)}）")
+    n = len(lit)
+    declared = int(info["video"].get("nb_frames") or 0)
+    if n == 0 or (declared and not 0 <= declared - n <= MAX_FRAME_SHORTFALL):
+        sys.exit(f"拒绝分析：解出 {n} 帧，容器记录 {declared} 帧")
     audio = audio_rms(a.video, fps, n)
     with open(a.out_csv, "w", newline="", encoding="utf-8") as f:
         wr = csv.writer(f)
