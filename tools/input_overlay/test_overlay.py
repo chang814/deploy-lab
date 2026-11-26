@@ -111,6 +111,30 @@ class StateTest(unittest.TestCase):
         th.join()
         self.assertEqual(errors, [])
 
+    def test_callback_paused_past_close_is_rejected(self):
+        # 确定性复现 Codex 第 3 轮的反例：回调在写入前暂停，期间记录器被关闭，恢复后写入
+        import io
+        import threading
+        log = s.LockedCsvLog(io.StringIO(), ["a"])
+        paused, resume, result = threading.Event(), threading.Event(), {}
+
+        def callback():
+            paused.set()
+            resume.wait()
+            try:
+                result["ok"] = log.write_row([1])
+            except Exception as e:  # noqa: BLE001
+                result["error"] = e
+
+        th = threading.Thread(target=callback)
+        th.start()
+        paused.wait()
+        log.close()          # 相当于 stop() 超时后照样关闭记录器
+        resume.set()
+        th.join()
+        self.assertEqual(result, {"ok": False})
+        self.assertEqual(log.dropped, 1)
+
     def test_all_keys_have_cells(self):
         self.assertEqual(set(s.VKEY_NAMES.values()) | {"滚轮", "左键", "右键"}, set(s.KEYS))
 
