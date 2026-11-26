@@ -88,8 +88,14 @@ static func build(id: String) -> Node3D:
 			_box(root, Vector3(0.03, 0.11, 0.045), Vector3(0, -0.05, 0.0), dark, Vector3(14, 0, 0))  # 握把
 			_muzzle(root, Vector3(0, 0.04, -0.17))
 		"knife":
-			_box(root, Vector3(0.006, 0.035, 0.2), Vector3(0, 0.01, -0.15), _mat(BLADE, 0.9, 0.2))  # 刀身
-			_box(root, Vector3(0.03, 0.012, 0.015), Vector3(0, 0.01, -0.045), metal)         # 护手
-			_box(root, Vector3(0.022, 0.03, 0.11), Vector3(0, 0.005, 0.02), dark)            # 刀柄
-			_muzzle(root, Vector3(0, 0.01, -0.25))
+			# 战术直刀：刀刃在下（-Y），刀背在上；刀尖用两段斜切的薄片收窄
+			var steel: StandardMaterial3D = _mat(BLADE, 0.9, 0.2)
+			_box(root, Vector3(0.005, 0.034, 0.15), Vector3(0, 0.012, -0.125), steel)                    # 刀身
+			_box(root, Vector3(0.005, 0.026, 0.05), Vector3(0, 0.006, -0.212), steel, Vector3(-16, 0, 0))  # 刀尖下斜（刃口上挑）
+			_box(root, Vector3(0.005, 0.014, 0.04), Vector3(0, 0.022, -0.222), steel, Vector3(14, 0, 0))   # 刀尖上斜（假刃）
+			_box(root, Vector3(0.0055, 0.004, 0.12), Vector3(0, 0.02, -0.12), _mat(DARK, 0.6, 0.4))        # 血槽
+			_box(root, Vector3(0.036, 0.016, 0.012), Vector3(0, 0.01, -0.046), metal)                     # 护手
+			_box(root, Vector3(0.024, 0.032, 0.1), Vector3(0, 0.006, 0.01), dark)                         # 刀柄
+			_box(root, Vector3(0.026, 0.026, 0.014), Vector3(0, 0.006, 0.066), metal)                     # 柄尾
+			_muzzle(root, Vector3(0, 0.01, -0.24))
 	return root

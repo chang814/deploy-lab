@@ -3,7 +3,10 @@ extends RefCounted
 ## 武器参数（来自 data/weapons/weapons.json）。
 
 const DEFAULT_PATH: String = "res://data/weapons/weapons.json"
-const VIEWMODEL_KEYS: PackedStringArray = ["draw_drop_m", "kick_m", "kick_recover_mps", "kick_pitch_deg_per_m", "flash_s"]
+const VIEWMODEL_KEYS: PackedStringArray = [
+	"draw_drop_m", "kick_m", "kick_return_per_s", "kick_pitch_deg_per_m", "flash_s", "converge_m",
+	"sway_deg_per_deg", "sway_max_deg", "sway_return_per_s", "bob_freq_per_m", "bob_x_m", "bob_y_m", "slash_s", "tracer_s",
+]
 const NUM_KEYS: PackedStringArray = ["slot", "draw_s", "fire_interval_s", "magazine", "reload_s", "range_m"]
 
 var tick_rate_hz: float = NAN

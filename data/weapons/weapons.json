@@ -2,12 +2,21 @@
 	"_comment": "武器参数（秒、米）。draw_s 来自 P0-5 第一批：切枪到第一发在 1.000–1.017 s；模拟以 tick_rate_hz 运行，「拔出 1.000 s + 0–1 个 tick 等待」是待 V 项验证的假设，V 项录好后再校准（#38）；刀的拔出时长尚未测量，暂用 1.0。射速、弹匣、换弹时间取公开资料的近似值，尚未实测。",
 	"tick_rate_hz": 64,
 	"viewmodel": {
-		"_comment": "第一人称表现参数：拔出时模型从画面下方多远升起、开火后坐位移与恢复速度、每米后坐对应的上抬角度、枪口闪光时长",
+		"_comment": "第一人称表现参数（只影响画面，不影响计时与命中）：拔出下沉距离、后坐位移 / 回弹速度 / 每米后坐的上抬角度、枪口闪光时长、枪管指向准星前方多远、惯性摆动、走路晃动、刀挥砍时长、曳光时长",
 		"draw_drop_m": 0.35,
 		"kick_m": 0.035,
-		"kick_recover_mps": 0.49,
+		"kick_return_per_s": 18.0,
 		"kick_pitch_deg_per_m": 120.0,
-		"flash_s": 0.05
+		"flash_s": 0.05,
+		"converge_m": 15.0,
+		"sway_deg_per_deg": 0.08,
+		"sway_max_deg": 5.0,
+		"sway_return_per_s": 9.0,
+		"bob_freq_per_m": 1.6,
+		"bob_x_m": 0.008,
+		"bob_y_m": 0.006,
+		"slash_s": 0.3,
+		"tracer_s": 0.06
 	},
 	"weapons": [
 		{

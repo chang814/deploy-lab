@@ -34,6 +34,7 @@ func _draw() -> void:
 			fposmod(look.yaw_deg, 360.0), look.pitch_deg,
 			str(look.settings.sensitivity) if look.settings != null else "?",
 			"CS2" if look.settings != null and look.settings.source == "CS2" else "file"]
+		text += "   %d fps" % Engine.get_frames_per_second()
 		draw_string(get_theme_default_font(), Vector2(12.0, size.y - 14.0), text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, 16, Color(1, 1, 1, 0.8))
 

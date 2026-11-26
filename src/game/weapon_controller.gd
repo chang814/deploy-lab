@@ -1,13 +1,22 @@
 class_name WeaponController
 extends Node3D
-## 武器控制（v0.2）：挂在相机下。读输入 → 驱动 WeaponState（按物理 tick 推进）→ 表现（模型、拔出动画、
-## 后坐、枪口火光、命中射线、弹孔）。暂停（鼠标未锁定）时不响应输入。
+## 武器控制（v0.2）：挂在相机下。读输入 → 驱动 WeaponState（按物理 tick 推进）→ 表现。
+## 暂停（鼠标未锁定）时不响应输入。
 ##
 ## 输入：1 / 2 / 3 选槽位，Q 切到上一把，滚轮切换，左键开火（按住），R 换弹。
+##
+## 命中判定与 CS 一致：射线从屏幕中心（准星）射出。为了让画面和子弹方向对得上：
+## - 枪管朝向「准星前方 converge_m 处」的那一点（参数见 data/weapons/weapons.json 的 viewmodel）（模型斜放在右下角，但枪口指向准星）
+## - 每发子弹画一条从枪口飞到命中点的曳光
+##
+## 表现（只影响画面，不影响计时与命中）：转视角时的惯性摆动、走路晃动、弹簧式后坐回弹、
+## 拔出（从下方带旋转升起）、换弹（下沉并侧倾）、刀的挥砍。
 
-const HIP_POS: Vector3 = Vector3(0.19, -0.2, -0.42)   # 模型在相机空间里的位置（表现参数，不是手感时长）
-const HIP_YAW_DEG: float = 10.0                        # 枪口略朝画面中心，露出枪身右侧
-const VM_SCALE: float = 0.78                           # 模型缩放
+const HIP_POS: Vector3 = Vector3(0.19, -0.2, -0.42)    # 枪械模型在相机空间里的位置
+const KNIFE_POS: Vector3 = Vector3(0.17, -0.16, -0.3)  # 刀的位置
+const KNIFE_ROT_DEG: Vector3 = Vector3(18.0, 12.0, -28.0)
+const KNIFE_SCALE: float = 1.25
+const VM_SCALE: float = 0.78
 
 @export var look_path: NodePath = ^"../.."
 
@@ -21,11 +30,17 @@ var _models: Dictionary = {}
 var _shown: String = ""
 var _kick: float = 0.0
 var _flash_left_s: float = 0.0
-var _flash: OmniLight3D = null
+var _flash_light: OmniLight3D = null
+var _flash_mesh: MeshInstance3D = null
 var _trigger: bool = false
 ## 两个物理 tick 之间收到过「按下」/「松开」：保留边沿，避免快速点击丢失
 var _press_queued: bool = false
 var _release_seen: bool = false
+var _sway: Vector2 = Vector2.ZERO          # (yaw, pitch) 度
+var _last_look: Vector2 = Vector2.ZERO
+var _bob_phase: float = 0.0
+var _slash_left_s: float = 0.0
+var _slash_dir: float = 1.0
 
 
 func _ready() -> void:
@@ -48,11 +63,24 @@ func setup(c: WeaponConfig) -> void:
 		m.visible = false
 		add_child(m)
 		_models[w["id"]] = m
-	_flash = OmniLight3D.new()
-	_flash.light_color = Color(1.0, 0.7, 0.35)
-	_flash.light_energy = 0.0
-	_flash.omni_range = 4.0
-	add_child(_flash)
+	_flash_light = OmniLight3D.new()
+	_flash_light.light_color = Color(1.0, 0.7, 0.35)
+	_flash_light.light_energy = 0.0
+	_flash_light.omni_range = 4.0
+	add_child(_flash_light)
+	_flash_mesh = MeshInstance3D.new()
+	var q: SphereMesh = SphereMesh.new()
+	q.radius = 0.028
+	q.height = 0.056
+	_flash_mesh.mesh = q
+	var fm: StandardMaterial3D = StandardMaterial3D.new()
+	fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	fm.albedo_color = Color(1.0, 0.75, 0.3, 0.9)
+	fm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_flash_mesh.material_override = fm
+	_flash_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_flash_mesh.visible = false
+	add_child(_flash_mesh)
 	_show(state.current)
 
 
@@ -108,41 +136,99 @@ func physics_step() -> bool:
 	return fired
 
 
+## 枪械的基础姿态：位于 HIP_POS，枪管（-Z）指向准星前方 converge_m 处。
+static func aim_basis(converge_m: float) -> Basis:
+	var target: Vector3 = Vector3(0.0, 0.0, -converge_m)
+	return Basis.looking_at((target - HIP_POS).normalized(), Vector3.UP)
+
+
 func _process(dt_s: float) -> void:
 	if cfg == null:
 		return
 	if _shown != state.current:
 		_show(state.current)
 	var m: Node3D = _models[_shown]
-	# 拔出动画：从画面下方升起，ease-out，用时 = 拔出时长
-	var drop: float = 0.0
+	var is_knife: bool = int(state.weapons[_shown]["magazine"]) == 0
+	var vm: Dictionary = cfg.viewmodel
+
+	# 惯性摆动：模型滞后于视角转动，然后弹回
+	if _look != null:
+		var now_look: Vector2 = Vector2(_look.yaw_deg, _look.pitch_deg)
+		var d: Vector2 = now_look - _last_look
+		_last_look = now_look
+		_sway += Vector2(-d.x, d.y) * vm["sway_deg_per_deg"]
+		_sway = _sway.limit_length(vm["sway_max_deg"])
+	_sway = _sway.lerp(Vector2.ZERO, 1.0 - exp(-vm["sway_return_per_s"] * dt_s))
+
+	# 走路晃动：按水平速度推进相位
+	var speed_mps: float = 0.0
+	var body: CharacterBody3D = _look.get_parent() as CharacterBody3D if _look != null else null
+	if body != null and body.is_inside_tree() and body.is_on_floor():
+		speed_mps = Vector2(body.velocity.x, body.velocity.z).length()
+	_bob_phase += speed_mps * vm["bob_freq_per_m"] * TAU * dt_s
+	var bob_k: float = clampf(speed_mps / 6.35, 0.0, 1.0)
+	var bob: Vector3 = Vector3(sin(_bob_phase) * vm["bob_x_m"], -absf(cos(_bob_phase)) * vm["bob_y_m"], 0.0) * bob_k
+
+	# 后坐：弹簧式回弹
+	_kick = _kick * exp(-vm["kick_return_per_s"] * dt_s)
+
+	# 拔出 / 换弹
+	var anim_pos: Vector3 = Vector3.ZERO
+	var anim_rot: Vector3 = Vector3.ZERO
 	if state.state == WeaponState.State.DRAWING:
 		var draw_s: float = float(state.weapons[_shown]["draw_s"])
 		var t: float = clampf(1.0 - (state.ready_at_s - state.now_s) / maxf(draw_s, 1e-6), 0.0, 1.0)
-		drop = cfg.viewmodel["draw_drop_m"] * pow(1.0 - t, 3.0)
+		var k: float = pow(1.0 - t, 3.0)
+		anim_pos = Vector3(0.03 * k, -cfg.viewmodel["draw_drop_m"] * k, 0.0)
+		anim_rot = Vector3(-35.0 * k, 0.0, 20.0 * k)
 	elif state.state == WeaponState.State.RELOADING:
-		drop = cfg.viewmodel["draw_drop_m"] * 0.35
-	_kick = move_toward(_kick, 0.0, cfg.viewmodel["kick_recover_mps"] * dt_s)
-	m.scale = Vector3.ONE * VM_SCALE
-	m.position = HIP_POS + Vector3(0, -drop, _kick)
-	m.rotation_degrees = Vector3(_kick * cfg.viewmodel["kick_pitch_deg_per_m"], HIP_YAW_DEG, 0)
+		var reload_s: float = float(state.weapons[_shown]["reload_s"])
+		var p: float = clampf(1.0 - (state.reload_done_s - state.now_s) / maxf(reload_s, 1e-6), 0.0, 1.0)
+		var dip: float = sin(PI * p)
+		anim_pos = Vector3(0.0, -0.08 * dip, 0.0)
+		anim_rot = Vector3(-10.0 * dip, 0.0, 28.0 * dip)
+
+	# 刀挥砍
+	var slash_rot: Vector3 = Vector3.ZERO
+	var slash_pos: Vector3 = Vector3.ZERO
+	if _slash_left_s > 0.0:
+		_slash_left_s = maxf(_slash_left_s - dt_s, 0.0)
+		var s: float = 1.0 - _slash_left_s / maxf(vm["slash_s"], 1e-6)
+		var arc: float = sin(PI * s)
+		slash_rot = Vector3(-25.0 * arc, 55.0 * (s - 0.5) * 2.0 * _slash_dir * arc, 30.0 * arc * _slash_dir)
+		slash_pos = Vector3(-0.12 * arc * _slash_dir, 0.03 * arc, -0.08 * arc)
+
+	var base_pos: Vector3 = KNIFE_POS if is_knife else HIP_POS
+	var base_basis: Basis = Basis.from_euler(KNIFE_ROT_DEG * PI / 180.0) if is_knife else aim_basis(vm["converge_m"])
+	var offset_rot: Vector3 = (anim_rot + slash_rot + Vector3(_sway.y + _kick * cfg.viewmodel["kick_pitch_deg_per_m"], _sway.x, 0.0)) * PI / 180.0
+	m.transform = Transform3D(base_basis * Basis.from_euler(offset_rot), base_pos + anim_pos + slash_pos + bob + Vector3(0.0, 0.0, _kick))
+	m.scale = Vector3.ONE * (KNIFE_SCALE if is_knife else VM_SCALE)
+
 	_flash_left_s = maxf(_flash_left_s - dt_s, 0.0)
-	_flash.light_energy = 6.0 if _flash_left_s > 0.0 else 0.0
+	_flash_light.light_energy = 6.0 if _flash_left_s > 0.0 else 0.0
+	_flash_mesh.visible = _flash_left_s > 0.0
+	var muzzle: Node3D = m.get_node_or_null("Muzzle") as Node3D
+	if muzzle != null:
+		var mp: Vector3 = m.transform * muzzle.position
+		_flash_light.position = mp
+		_flash_mesh.position = mp
 
 
 func _show(id: String) -> void:
 	for k: String in _models:
 		(_models[k] as Node3D).visible = k == id
 	_shown = id
-	var muzzle: Node3D = (_models[id] as Node3D).get_node_or_null("Muzzle") as Node3D
-	if muzzle != null and _flash != null:
-		_flash.position = HIP_POS + muzzle.position * VM_SCALE
+	_slash_left_s = 0.0
 
 
 func _on_fire() -> void:
 	shots += 1
-	_kick = cfg.viewmodel["kick_m"]
-	if int(state.weapons[state.current]["magazine"]) > 0:
+	var is_knife: bool = int(state.weapons[state.current]["magazine"]) == 0
+	if is_knife:
+		_slash_left_s = cfg.viewmodel["slash_s"]
+		_slash_dir = -_slash_dir
+	else:
+		_kick = cfg.viewmodel["kick_m"]
 		_flash_left_s = cfg.viewmodel["flash_s"]
 	var cam: Camera3D = get_parent() as Camera3D
 	if cam == null or not is_inside_tree():
@@ -154,6 +240,9 @@ func _on_fire() -> void:
 	if owner_body != null:
 		q.exclude = [owner_body.get_rid()]
 	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(q)
+	var end: Vector3 = to if hit.is_empty() else hit["position"]
+	if not is_knife:
+		_spawn_tracer(end)
 	if hit.is_empty():
 		return
 	var collider: Object = hit["collider"]
@@ -161,8 +250,34 @@ func _on_fire() -> void:
 		hits += 1
 		last_hit_target = (collider as Node).name
 		collider.call("on_hit")
-	else:
+	elif not is_knife:
 		_spawn_mark(hit["position"], hit["normal"])
+
+
+## 曳光：从枪口到命中点的一条细亮线，很快消失。
+func _spawn_tracer(end: Vector3) -> void:
+	var m: Node3D = _models[_shown]
+	var muzzle: Node3D = m.get_node_or_null("Muzzle") as Node3D
+	if muzzle == null:
+		return
+	var start: Vector3 = m.global_transform * muzzle.position
+	var length: float = start.distance_to(end)
+	if length < 0.05:
+		return
+	var tracer: MeshInstance3D = MeshInstance3D.new()
+	var mesh: BoxMesh = BoxMesh.new()
+	mesh.size = Vector3(0.012, 0.012, length)
+	tracer.mesh = mesh
+	var mat: StandardMaterial3D = StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(1.0, 0.85, 0.45, 0.85)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	tracer.material_override = mat
+	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	get_tree().current_scene.add_child(tracer)
+	tracer.global_position = (start + end) / 2.0
+	tracer.look_at(end, Vector3.UP if absf((end - start).normalized().dot(Vector3.UP)) < 0.99 else Vector3.FORWARD)
+	get_tree().create_timer(cfg.viewmodel["tracer_s"]).timeout.connect(tracer.queue_free)
 
 
 func _spawn_mark(pos: Vector3, normal: Vector3) -> void:
