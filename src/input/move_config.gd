@@ -47,6 +47,9 @@ static func from_json_text(text: String) -> MoveConfig:
 	if c.get_f("walk_multiplier") > 1.0:
 		c.error = "walk_multiplier 必须在 (0, 1] 之间"
 		return c
+	if c.get_f("body_height_m") < 2.0 * c.get_f("body_radius_m"):
+		c.error = "body_height_m 不能小于 2 × body_radius_m（胶囊体做不出来）"
+		return c
 	if c.get_f("eye_height_m") >= c.get_f("body_height_m"):
 		c.error = "eye_height_m 必须小于 body_height_m"
 		return c

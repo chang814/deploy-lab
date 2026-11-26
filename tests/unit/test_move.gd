@@ -71,6 +71,11 @@ func _test_config() -> void:
 	bad = c.values.duplicate()
 	bad["eye_height_m"] = 5.0
 	ok("眼高超过身高无效", not MoveConfig.from_json_text(JSON.stringify(bad)).is_valid())
+	bad = c.values.duplicate()
+	bad["body_radius_m"] = 1.0
+	bad["body_height_m"] = 1.5
+	bad["eye_height_m"] = 1.3
+	ok("身高小于两倍半径无效", not MoveConfig.from_json_text(JSON.stringify(bad)).is_valid())
 
 
 func _make_player() -> Array:
@@ -144,6 +149,23 @@ func _test_input_and_body(p: PlayerMove, root: Node) -> void:
 	space.echo = false
 	p._unhandled_input(space)
 	ok("按下空格排队起跳", p.jump_queued())
+	# 物理帧消费起跳请求：只起跳一次，下一帧落地不会自动再跳
+	(root.get_node("Player/Look") as FpsLook).captured = true
+	var v1: Vector3 = p.physics_tick(Vector3.ZERO, true, DT_S)
+	near("物理帧起跳", v1.y, p.cfg.get_f("jump_speed_mps"), 1e-6)
+	ok("起跳请求已消费", not p.jump_queued())
+	var v2: Vector3 = p.physics_tick(Vector3.ZERO, true, DT_S)
+	near("下一帧在地面不再起跳", v2.y, 0.0, 0.0)
+	# 物理帧用 WASD 输入：按住 W 一帧后向前有速度
+	held.clear()
+	held.merge({KEY_W: true})
+	var v3: Vector3 = p.physics_tick(Vector3.ZERO, true, DT_S)
+	ok("物理帧按 W 向前加速（-Z）", v3.z < 0.0)
+	# 暂停时不响应输入
+	(root.get_node("Player/Look") as FpsLook).captured = false
+	var v4: Vector3 = p.physics_tick(Vector3.ZERO, true, DT_S)
+	ok("暂停时忽略移动输入", v4 == Vector3.ZERO)
+	held.clear()
 	# 碰撞体尺寸跟随配置（非默认值）
 	var vals: Dictionary = p.cfg.values.duplicate()
 	vals["body_radius_m"] = 0.2
