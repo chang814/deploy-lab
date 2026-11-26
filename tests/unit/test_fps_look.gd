@@ -31,15 +31,16 @@ func _test_ready_in_tree() -> void:
 	# 测试入口在主循环启动前运行、拿不到场景树，所以直接调用这两个回调
 	var root: Node = _make()
 	Input.use_accumulated_input = true
-	var player: FpsLook = root.get_node("Player") as FpsLook
+	var player: FpsLook = root.get_node("Player/Look") as FpsLook
 	var modes: Array[int] = []
 	player.apply_mouse_mode = func(mode: Input.MouseMode) -> void: modes.append(mode)
+	player.read_cs2_sensitivity = func(_c: Cs2Cfg) -> float: return NAN   # 不依赖本机是否装了 CS2
 	player._ready()
 	ok("_ready 调用了 MOUSE_MODE_CAPTURED", modes == [Input.MOUSE_MODE_CAPTURED])
 	ok("_ready 后已加载配置", player.look != null and player.settings != null)
 	ok("_ready 关闭了输入累积", not Input.use_accumulated_input)
 	ok("_ready 后处于锁定状态", player.captured)
-	near("_ready 后 FOV", (root.get_node("Player/Camera3D") as Camera3D).fov, 73.739795291688, 1e-4)
+	near("_ready 后 FOV", (root.get_node("Player/Look/Camera3D") as Camera3D).fov, 73.739795291688, 1e-4)
 	player._exit_tree()
 	ok("离开场景树后恢复输入累积", Input.use_accumulated_input)
 	ok("离开场景树后解除锁定", not player.captured)
@@ -49,7 +50,7 @@ func _test_ready_in_tree() -> void:
 
 func _test_input_events() -> void:
 	var root: Node = _make()
-	var player: FpsLook = root.get_node("Player") as FpsLook
+	var player: FpsLook = root.get_node("Player/Look") as FpsLook
 	_setup_default(player)
 	var modes: Array[int] = []
 	player.apply_mouse_mode = func(mode: Input.MouseMode) -> void: modes.append(mode)
@@ -99,14 +100,14 @@ func _test_input_events() -> void:
 func _test_non_default_config() -> void:
 	# 非默认 FOV 与不同轴增益：防止把默认值写死或把两个轴的参数接反
 	var root: Node = _make()
-	var player: FpsLook = root.get_node("Player") as FpsLook
+	var player: FpsLook = root.get_node("Player/Look") as FpsLook
 	player.setup(
 		LookConfig.from_json_text(
 			'{"m_yaw_deg": 0.03, "m_pitch_deg": 0.01, "pitch_min_deg": -10, "pitch_max_deg": 20, "base_hfov_4x3_deg": 100}'
 		),
 		PlayerSettings.from_json_text('{"sensitivity": 1.5}')
 	)
-	near("FOV 跟随配置（4:3 水平 100°）", (root.get_node("Player/Camera3D") as Camera3D).fov,
+	near("FOV 跟随配置（4:3 水平 100°）", (root.get_node("Player/Look/Camera3D") as Camera3D).fov,
 		LookMath.vfov_from_hfov(100.0, 4.0 / 3.0), 1e-4)
 	player.look_by(100.0, -100.0)
 	near("yaw 用 m_yaw", player.yaw_deg, 100.0 * 1.5 * 0.03, 1e-9)
@@ -125,15 +126,15 @@ func _make() -> Node:
 
 func _test_main_scene() -> void:
 	var root: Node = _make()
-	var player: FpsLook = root.get_node("Player") as FpsLook
-	ok("主场景里有 Player（FpsLook）", player != null)
-	ok("Player 下有 Camera3D", root.get_node_or_null("Player/Camera3D") is Camera3D)
+	var player: FpsLook = root.get_node("Player/Look") as FpsLook
+	ok("主场景里有 Player/Look（FpsLook）", player != null)
+	ok("Player 下有 Camera3D", root.get_node_or_null("Player/Look/Camera3D") is Camera3D)
 	ok("有准星", root.get_node_or_null("HUD/Crosshair") is Control)
 	ok("地面有碰撞", (root.get_node("Room/Floor") as CSGBox3D).use_collision)
 	var cfg: LookConfig = LookConfig.load_file()
 	var ps: PlayerSettings = PlayerSettings.load_file()
 	player.setup(cfg, ps)
-	var cam: Camera3D = root.get_node("Player/Camera3D") as Camera3D
+	var cam: Camera3D = root.get_node("Player/Look/Camera3D") as Camera3D
 	ok("相机保持垂直 FOV", cam.keep_aspect == Camera3D.KEEP_HEIGHT)
 	# 规格：4:3 下水平 90° → 垂直 73.739795…°（Camera3D.fov 是 32 位，误差放宽到 1e-4）
 	near("垂直 FOV", cam.fov, 73.739795291688, 1e-4)
@@ -142,7 +143,7 @@ func _test_main_scene() -> void:
 
 func _test_look_math_wiring() -> void:
 	var root: Node = _make()
-	var player: FpsLook = root.get_node("Player") as FpsLook
+	var player: FpsLook = root.get_node("Player/Look") as FpsLook
 	var cfg: LookConfig = LookConfig.from_json_text(
 		'{"m_yaw_deg": 0.022, "m_pitch_deg": 0.022, "pitch_min_deg": -89, "pitch_max_deg": 89, "base_hfov_4x3_deg": 90}'
 	)
@@ -155,7 +156,7 @@ func _test_look_math_wiring() -> void:
 	# 鼠标向上（counts_y 为负）→ 抬头为正
 	player.look_by(0.0, -100.0)
 	near("pitch 抬头 4.4°", player.pitch_deg, 4.4, 1e-9)
-	var cam: Camera3D = root.get_node("Player/Camera3D") as Camera3D
+	var cam: Camera3D = root.get_node("Player/Look/Camera3D") as Camera3D
 	near("相机 X 旋转 4.4°", cam.rotation_degrees.x, 4.4, 1e-4)
 	# pitch 被夹住
 	player.look_by(0.0, -100000.0)

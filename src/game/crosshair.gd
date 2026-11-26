@@ -19,7 +19,7 @@ func _draw() -> void:
 	for dir: Vector2 in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
 		draw_line(c + dir * GAP_PX, c + dir * (GAP_PX + LENGTH_PX), COLOR, THICKNESS_PX)
 	# 左下角显示朝向（用于「转一圈要移动多少厘米」的对比测试）
-	var look: FpsLook = get_tree().current_scene.get_node_or_null("Player") as FpsLook if is_inside_tree() else null
+	var look: FpsLook = get_tree().current_scene.get_node_or_null("Player/Look") as FpsLook if is_inside_tree() else null
 	if look != null and not look.captured:
 		# 暂停提示
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.45))
@@ -30,9 +30,10 @@ func _draw() -> void:
 			draw_string(font, Vector2((size.x - w) / 2.0, size.y / 2.0 - 30.0 + i * 44.0), PAUSE_LINES[i],
 				HORIZONTAL_ALIGNMENT_LEFT, -1.0, fs, Color(1, 1, 1, 0.95))
 	if look != null:
-		var text: String = "yaw %.1f°  pitch %.1f°  sens %s" % [
+		var text: String = "yaw %.1f°  pitch %.1f°  sens %s (%s)" % [
 			fposmod(look.yaw_deg, 360.0), look.pitch_deg,
-			str(look.settings.sensitivity) if look.settings != null else "?"]
+			str(look.settings.sensitivity) if look.settings != null else "?",
+			"CS2" if look.settings != null and look.settings.source == "CS2" else "file"]
 		draw_string(get_theme_default_font(), Vector2(12.0, size.y - 14.0), text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, 16, Color(1, 1, 1, 0.8))
 

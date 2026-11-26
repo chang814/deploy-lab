@@ -33,6 +33,12 @@ func _ready() -> void:
 	if not ps.is_valid():
 		push_error(ps.error)
 		return
+	# 优先用 CS2 里的灵敏度（只读导入，#37）；读不到就用 data/player/settings.json
+	var cs2: Cs2Cfg = Cs2Cfg.new()
+	var cs2_sens: float = read_cs2_sensitivity.call(cs2)
+	if not is_nan(cs2_sens):
+		ps.sensitivity = cs2_sens
+		ps.source = "CS2"
 	setup(cfg, ps)
 	set_captured(true)
 
@@ -63,6 +69,11 @@ func look_by(counts_x: float, counts_y: float) -> void:
 func set_captured(value: bool) -> void:
 	captured = value
 	apply_mouse_mode.call(Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE)
+
+
+## 读取 CS2 灵敏度。测试换成固定值，避免依赖本机是否装了 CS2
+var read_cs2_sensitivity: Callable = func(c: Cs2Cfg) -> float:
+	return c.read_sensitivity()
 
 
 ## 退出游戏。测试换成记录器

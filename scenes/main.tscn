@@ -3,6 +3,7 @@
 [ext_resource type="Script" path="res://src/game/fps_look.gd" id="1_look"]
 [ext_resource type="Script" path="res://src/game/crosshair.gd" id="2_cross"]
 [ext_resource type="Shader" path="res://scenes/materials/grid.gdshader" id="3_grid"]
+[ext_resource type="Script" path="res://src/game/player_move.gd" id="4_move"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 
@@ -24,6 +25,10 @@ shader = ExtResource("3_grid")
 shader_parameter/base_color = Color(0.62, 0.6, 0.56, 1)
 shader_parameter/line_color = Color(0.5, 0.48, 0.45, 1)
 shader_parameter/major_color = Color(0.4, 0.38, 0.36, 1)
+
+[sub_resource type="CapsuleShape3D" id="body_shape"]
+radius = 0.4064
+height = 1.8288
 
 [sub_resource type="StandardMaterial3D" id="mat_box"]
 albedo_color = Color(0.75, 0.55, 0.3, 1)
@@ -86,11 +91,18 @@ use_collision = true
 size = Vector3(2, 2, 2)
 material = SubResource("mat_box")
 
-[node name="Player" type="Node3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.64, 8)
+[node name="Player" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.95, 8)
+script = ExtResource("4_move")
+
+[node name="Body" type="CollisionShape3D" parent="Player"]
+shape = SubResource("body_shape")
+
+[node name="Look" type="Node3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7112, 0)
 script = ExtResource("1_look")
 
-[node name="Camera3D" type="Camera3D" parent="Player"]
+[node name="Camera3D" type="Camera3D" parent="Player/Look"]
 current = true
 
 [node name="HUD" type="CanvasLayer" parent="."]
