@@ -62,7 +62,12 @@ func look_by(counts_x: float, counts_y: float) -> void:
 
 func set_captured(value: bool) -> void:
 	captured = value
-	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE
+	apply_mouse_mode.call(Input.MOUSE_MODE_CAPTURED if value else Input.MOUSE_MODE_VISIBLE)
+
+
+## 真正改变鼠标模式的一步。无窗口环境下 Input.mouse_mode 不会生效，测试把它换成记录器来确认确实调用了
+var apply_mouse_mode: Callable = func(mode: Input.MouseMode) -> void:
+	Input.mouse_mode = mode
 
 
 func _exit_tree() -> void:

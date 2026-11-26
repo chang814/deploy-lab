@@ -32,7 +32,10 @@ func _test_ready_in_tree() -> void:
 	var root: Node = _make()
 	Input.use_accumulated_input = true
 	var player: FpsLook = root.get_node("Player") as FpsLook
+	var modes: Array[int] = []
+	player.apply_mouse_mode = func(mode: Input.MouseMode) -> void: modes.append(mode)
 	player._ready()
+	ok("_ready 调用了 MOUSE_MODE_CAPTURED", modes == [Input.MOUSE_MODE_CAPTURED])
 	ok("_ready 后已加载配置", player.look != null and player.settings != null)
 	ok("_ready 关闭了输入累积", not Input.use_accumulated_input)
 	ok("_ready 后处于锁定状态", player.captured)
@@ -40,6 +43,7 @@ func _test_ready_in_tree() -> void:
 	player._exit_tree()
 	ok("离开场景树后恢复输入累积", Input.use_accumulated_input)
 	ok("离开场景树后解除锁定", not player.captured)
+	ok("离开时调用了 MOUSE_MODE_VISIBLE", modes.back() == Input.MOUSE_MODE_VISIBLE)
 	root.free()
 
 
@@ -47,7 +51,10 @@ func _test_input_events() -> void:
 	var root: Node = _make()
 	var player: FpsLook = root.get_node("Player") as FpsLook
 	_setup_default(player)
-	player.captured = true
+	var modes: Array[int] = []
+	player.apply_mouse_mode = func(mode: Input.MouseMode) -> void: modes.append(mode)
+	player.set_captured(true)
+	ok("锁定时调用了 MOUSE_MODE_CAPTURED", modes == [Input.MOUSE_MODE_CAPTURED])
 	# 鼠标向右 100、向上 50（screen_relative.y 为负）→ yaw +4.4°，pitch +2.2°
 	player._unhandled_input(_motion(100.0, -50.0))
 	near("事件 → yaw 向右", player.yaw_deg, 4.4, 1e-9)
@@ -58,6 +65,7 @@ func _test_input_events() -> void:
 	esc.pressed = true
 	player._unhandled_input(esc)
 	ok("Esc 后解除锁定", not player.captured)
+	ok("Esc 时调用了 MOUSE_MODE_VISIBLE", modes.back() == Input.MOUSE_MODE_VISIBLE)
 	player._unhandled_input(_motion(1000.0, 1000.0))
 	near("解除锁定时忽略移动（yaw）", player.yaw_deg, 4.4, 1e-9)
 	near("解除锁定时忽略移动（pitch）", player.pitch_deg, 2.2, 1e-9)
@@ -67,6 +75,8 @@ func _test_input_events() -> void:
 	click.pressed = true
 	player._unhandled_input(click)
 	ok("点击后重新锁定", player.captured)
+	ok("点击时调用了 MOUSE_MODE_CAPTURED", modes.back() == Input.MOUSE_MODE_CAPTURED)
+	ok("一共切换了 3 次鼠标模式", modes.size() == 3)
 	player._unhandled_input(_motion(-100.0, 0.0))
 	near("重新锁定后响应移动", player.yaw_deg, 0.0, 1e-9)
 	player.set_captured(false)
