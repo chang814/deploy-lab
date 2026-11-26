@@ -21,7 +21,7 @@
 - 决策记录 0002：v0.1 工程结构（仓库根目录即 Godot 工程）、依赖方向、测试入口与 CI
 - P0-5 手感测量录制指引 `docs/measurement/p0-5-guide.md`（命令在控制台粘贴，不写 CS2 文件；显示器采集）
 - 输入显示层 `tools/input_overlay/`：置顶小窗口用 Raw Input 被动显示按键，使按键时刻出现在录像中（每次按下至少点亮 0.1 s、带按键计数；关闭后的写入被安全拒绝；14 条测试）
-- v0.1 工程骨架：仓库根目录 Godot 工程、`src/core/look_math.gd`（从 spike 转正）、`src/input/look_config.gd`、`data/look/defaults.json`、测试入口 `tests/run_all.gd`（71 条测试）、GitHub Actions CI（Linux + Windows）
+- v0.1 工程骨架：仓库根目录 Godot 工程、`src/core/look_math.gd`（从 spike 转正）、`src/input/look_config.gd`、`data/look/defaults.json`、测试入口 `tests/run_all.gd`（77 条测试；用 Logger 捕获运行时错误，严格校验结果，附 7 个故障样例由 CI 自检）、GitHub Actions CI（Linux + Windows）
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
@@ -29,6 +29,9 @@
 - 路线图新增「地图线」：原创练习地图 M0–M3；立项书范围加入原创练习地图，红线明确不复刻现有地图的布局或外观；v0.1 加入基础移动与碰撞，v0.2 加入最小靶场
 - 工作流：调度分为方式 A（Claude 调度 codex exec）与方式 B（人类在工具中启动），记录并行原则
 - 共享文件夹协议第 5 节：人类确认主文件夹的改动属于预期后，agent 可保持原样继续工作
+
+### 修复
+- Raw Input 计数器与输入显示层在非中文 Windows（cp1252 控制台）上打印中文会崩溃（CI 发现）
 
 ## [0.0.1] - 2026-11-25
 ### 新增

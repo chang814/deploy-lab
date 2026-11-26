@@ -12,8 +12,8 @@ var m_pitch_deg: float = NAN
 var pitch_min_deg: float = NAN
 var pitch_max_deg: float = NAN
 var base_hfov_4x3_deg: float = NAN
-## 读取或校验失败的原因；为空表示有效
-var error: String = ""
+## 读取或校验失败的原因；为空表示有效。默认无效，只有完整校验通过后才清空
+var error: String = "尚未加载"
 
 
 func is_valid() -> bool:
@@ -40,15 +40,22 @@ static func from_json_text(text: String) -> LookConfig:
 		if t != TYPE_FLOAT and t != TYPE_INT:
 			c.error = "字段不是数字：%s" % key
 			return c
+		# JSON 允许 1e99999 这类写法，Godot 会解析成无穷大；必须拒绝，否则会污染视角计算
+		if not is_finite(float(d[key])):
+			c.error = "字段不是有限数：%s" % key
+			return c
 	c.m_yaw_deg = float(d["m_yaw_deg"])
 	c.m_pitch_deg = float(d["m_pitch_deg"])
 	c.pitch_min_deg = float(d["pitch_min_deg"])
 	c.pitch_max_deg = float(d["pitch_max_deg"])
 	c.base_hfov_4x3_deg = float(d["base_hfov_4x3_deg"])
+	# 只做结构性检查；零或负的增益在数学层有明确语义，pitch 的具体范围待 P0-5 实测，这里不额外限制
 	if c.pitch_min_deg >= c.pitch_max_deg:
 		c.error = "pitch_min_deg 必须小于 pitch_max_deg"
 	elif c.base_hfov_4x3_deg <= 0.0 or c.base_hfov_4x3_deg >= 180.0:
 		c.error = "base_hfov_4x3_deg 必须在 (0, 180) 之间"
+	else:
+		c.error = ""
 	return c
 
 

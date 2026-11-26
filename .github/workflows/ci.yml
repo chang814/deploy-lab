@@ -49,14 +49,31 @@ jobs:
         run: ~/godot/godot --headless --path . --import
 
       - name: Godot 单元测试
-        run: ~/godot/godot --headless --path . -s res://tests/run_all.gd
+        # timeout：测试卡住（例如误用 assert）时 5 分钟内失败，而不是等到整个任务超时
+        run: timeout 300 ~/godot/godot --headless --path . -s res://tests/run_all.gd
+
+      - name: 测试入口自检（每个故障样例都必须让 run_all 失败）
+        run: |
+          set -u
+          ok=1
+          for d in tests/runner_fixtures/*/; do
+            name=$(basename "$d")
+            if timeout 120 ~/godot/godot --headless --path . -s res://tests/run_all.gd -- "--unit-dir=res://tests/runner_fixtures/$name" > /dev/null 2>&1; then
+              echo "::error::故障样例 $name 没有让测试入口失败"; ok=0
+            else
+              echo "故障样例 $name：按预期失败"
+            fi
+          done
+          [ "$ok" = 1 ]
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Python 测试（与平台无关）
-        run: python -I -B -m unittest discover -s tools/input_overlay -p "test_*.py" -v
+        run: |
+          python -I -B -m unittest discover -s tools/input_overlay -p "test_*.py" -v
+          python -I -B -m unittest discover -s spikes/raw-input/tools -p "test_compare_runs.py" -v
 
   windows:
     name: Windows（Windows 专用 Python 测试）

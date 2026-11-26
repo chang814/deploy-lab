@@ -5,6 +5,7 @@ extends RefCounted
 var _passed: int = 0
 var _failed: int = 0
 var _messages: PackedStringArray = []
+var _expected_errors: int = 0
 
 
 ## 子类实现：在这里调用各个测试函数。
@@ -12,10 +13,16 @@ func run_tests() -> void:
 	pass
 
 
-## 由 run_all.gd 调用，返回 {passed, failed, messages}。
+## 由 run_all.gd 调用，返回 {passed, failed, messages, expected_errors}。
 func run() -> Dictionary:
 	run_tests()
-	return {"passed": _passed, "failed": _failed, "messages": _messages}
+	return {"passed": _passed, "failed": _failed, "messages": _messages, "expected_errors": _expected_errors}
+
+
+## 声明接下来的代码会故意触发 n 条引擎错误日志（例如喂给解析器非法输入）。
+## run_all.gd 要求实际捕获到的错误数与声明的总数**完全相等**，多了少了都算失败。
+func expect_errors(n: int) -> void:
+	_expected_errors += n
 
 
 func ok(label: String, cond: bool) -> void:
