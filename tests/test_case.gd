@@ -40,4 +40,4 @@ func near(label: String, actual: float, expected: float, tol: float) -> void:
 		_passed += 1
 	else:
 		_failed += 1
-		_messages.append("失败 %s：实际 %.15f，期望 %.15f，允许误差 %e" % [label, actual, expected, tol])
+		_messages.append("失败 %s：实际 %.15f，期望 %.15f，允许误差 %s" % [label, actual, expected, str(tol)])  # GDScript 不支持 %e
