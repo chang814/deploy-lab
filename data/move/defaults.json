@@ -1,0 +1,15 @@
+{
+	"_comment": "移动参数（米、秒）。数值取自 Source / CS2 的公开默认值（1 单位 = 0.0254 m）作为参考起点，尚未对 CS2 实测对齐（路线图 v0.1：移动手感暂不对齐 CS2）。",
+	"run_speed_mps": 6.35,
+	"walk_multiplier": 0.52,
+	"accelerate_per_s": 5.5,
+	"air_accelerate_per_s": 12.0,
+	"air_speed_cap_mps": 0.762,
+	"friction_per_s": 5.2,
+	"stop_speed_mps": 2.032,
+	"gravity_mps2": 20.32,
+	"jump_speed_mps": 7.6706,
+	"eye_height_m": 1.6256,
+	"body_height_m": 1.8288,
+	"body_radius_m": 0.4064
+}

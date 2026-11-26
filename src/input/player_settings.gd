@@ -6,6 +6,8 @@ extends RefCounted
 const DEFAULT_PATH: String = "res://data/player/settings.json"
 
 var sensitivity: float = NAN
+## 灵敏度来自哪里：「设置文件」或「CS2」（界面显示用）
+var source: String = "设置文件"
 ## 读取或校验失败的原因；为空表示有效
 var error: String = "尚未加载"
 

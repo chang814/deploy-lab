@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 ### 新增
+- v0.1 基础移动与碰撞（#36）：WASD、Shift 慢走、空格跳跃（需按下，不能按住连跳），Source 风格的地面摩擦 / 加速与空中加速上限（`src/core/move_math.gd`）；参数 `data/move/defaults.json` 取自 Source / CS2 公开默认值，尚未实测对齐
+- 只读导入 CS2 灵敏度（#37）：从 Steam 用户目录的 CS2 cfg 读取 `sensitivity`，读不到时回退到 `data/player/settings.json`；左下角显示来源
 - v0.1 第一人称视角练习场景（#35）：灰盒房间（世界坐标网格材质）、十字准星、采用项目规格基线（与 CS2 相同换算公式）的视角（`src/game/fps_look.gd`，原始鼠标位移 + LookMath，4:3 水平 90° 换算的垂直 FOV），Esc 暂停（放出鼠标、显示暂停提示，点击继续，暂停时再按 Esc 退出）；默认全屏；左下角显示 yaw/pitch/灵敏度；玩家灵敏度设置 `data/player/settings.json`
 - 共享文件夹协作协议（worktree 隔离、单写入者、GitHub 交接）
 - Codex 协作提示词 `docs/prompts/codex-kickoff.md`
