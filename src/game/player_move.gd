@@ -9,6 +9,10 @@ extends CharacterBody3D
 var cfg: MoveConfig = null
 var _look: FpsLook = null
 var _jump_queued: bool = false
+## 相机平滑：物理每秒只更新 tick_rate 次，渲染帧在两次物理更新之间按比例插值身体位置，避免高刷新率下画面一顿一顿
+var _eye_offset_m: float = 0.0
+var _prev_pos: Vector3 = Vector3.ZERO
+var _curr_pos: Vector3 = Vector3.ZERO
 
 
 func _ready() -> void:
@@ -22,7 +26,10 @@ func _ready() -> void:
 func setup(c: MoveConfig) -> void:
 	cfg = c
 	_look = get_node(look_path) as FpsLook
-	_look.position.y = c.get_f("eye_height_m") - c.get_f("body_height_m") / 2.0
+	_eye_offset_m = c.get_f("eye_height_m") - c.get_f("body_height_m") / 2.0
+	_look.position.y = _eye_offset_m
+	_prev_pos = position
+	_curr_pos = position
 	# 碰撞体尺寸也来自配置（复制一份形状，避免改到场景里共享的资源）
 	var body: CollisionShape3D = get_node_or_null(^"Body") as CollisionShape3D
 	if body != null:
@@ -83,7 +90,16 @@ func _physics_process(dt_s: float) -> void:
 		return
 	velocity = physics_tick(velocity, is_on_floor(), dt_s)
 	# move_and_slide 需要物理世界，测试入口里没有；由试玩确认（PR #40 已知局限）
+	_prev_pos = global_position
 	move_and_slide()
+	_curr_pos = global_position
+
+
+func _process(_dt_s: float) -> void:
+	if cfg == null or _look == null:
+		return
+	var f: float = Engine.get_physics_interpolation_fraction()
+	_look.global_position = _prev_pos.lerp(_curr_pos, f) + Vector3(0.0, _eye_offset_m, 0.0)
 
 
 ## 一个物理帧的输入处理 + 速度计算（不含 move_and_slide）。起跳请求在这里被消费，只生效一次。
