@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 ### 新增
+- v0.1 第一人称视角练习场景（#35）：灰盒房间（世界坐标网格材质）、十字准星、与 CS2 同公式的视角（`src/game/fps_look.gd`，原始鼠标位移 + LookMath，4:3 水平 90° 换算的垂直 FOV），Esc 释放鼠标；玩家灵敏度设置 `data/player/settings.json`
 - 共享文件夹协作协议（worktree 隔离、单写入者、GitHub 交接）
 - Codex 协作提示词 `docs/prompts/codex-kickoff.md`
 - MIT 许可证
@@ -25,6 +26,7 @@
 - P0-5 切枪时长分析工具 `tools/feel_analysis/`（按键记录为输入时间线、按键格只定帧，OBS 毫秒开录时刻 + 按显示层点亮规则推算亮灭时间段来估计对齐；火光与第一声枪响唯一配对；逐帧时间戳校验；82 条测试；人工逐帧抽查工具 spotcheck.py；测量 CSV 设为 Godot 不导入，已加入 CI，依赖 numpy 2.4.6）与第一批结果 `data/feel/switch.csv`、`data/feel/switch_samples.csv`、`docs/measurement/p0-5-batch1.md`（五种切换实测 1000.0–1016.7 ms；25 个样本全部逐帧抽查，换枪 → 第一发均为 599–601 帧；「散布来自 tick 等待」为有证据支持的假设；待正常速度对照）
 
 ### 变更
+- 路线图：Phase 0 出口标准调整，默认刀数据与 V 项移到 v0.2 / v0.3 之前补齐（#38）
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
 - 审定灵敏度与 FOV 规格（Issue #2，GPT 审定、Claude 审查）：修正 16:10 FOV 舍入，补充复算结果、开镜/pitch 待测量方案及单元测试用例表
 - 路线图新增「地图线」：原创练习地图 M0–M3；立项书范围加入原创练习地图，红线明确不复刻现有地图的布局或外观；v0.1 加入基础移动与碰撞，v0.2 加入最小靶场
