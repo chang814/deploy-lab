@@ -21,6 +21,7 @@
 - 决策记录 0002：v0.1 工程结构（仓库根目录即 Godot 工程）、依赖方向、测试入口与 CI
 - P0-5 手感测量录制指引 `docs/measurement/p0-5-guide.md`（命令在控制台粘贴，不写 CS2 文件；显示器采集）
 - 输入显示层 `tools/input_overlay/`：置顶小窗口用 Raw Input 被动显示按键，使按键时刻出现在录像中（每次按下至少点亮 0.1 s、带按键计数；关闭后的写入被安全拒绝；14 条测试）
+- P0-2 同类项目与技术方案调研报告 `docs/research/competitors.md`（涵盖开源练枪工具、Godot 4 viewmodel/切枪实现、灵敏度/FOV 换算与程序化动画共 14 个对象）
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
