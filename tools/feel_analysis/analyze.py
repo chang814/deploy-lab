@@ -63,8 +63,8 @@ MATCH_EARLY_S = 0.03        # 对齐后，录像里的亮起 / 熄灭最多比�
 MATCH_LATE_S = 0.07         # 对齐后，录像里的亮起 / 熄灭最多比推算的晚这么多
 MIN_LIT_S = 0.10            # 与 tools/input_overlay/overlay_state.py 的 MIN_LIT_S 一致（测试会核对）
 WHEEL_LIT_S = 0.10          # 与 overlay_state.py 的 WHEEL_FLASH_S 一致
-MERGE_GAP_S = 0.025         # 两段点亮间隔不到这么久（约 1.5 帧），录像里分辨不出，按一段处理
-HEAD_SKIP_S = 0.10          # 录像开头这么久内开始的点亮段不比较
+MERGE_GAP_S = 0.025         # 两段点亮间隔不到这么久（约 1.5 帧）时，录像里可能分辨不出；以录像为准决定合不合并
+LOOKBACK_S = 10.0           # 推算第 0 帧的点亮状态时，往前看这么久的记录（任何按住超过它的键会被当成没按）
 MIN_PAIRS = 3
 MAX_FRAME_T_ERR_S = 0.0005  # 特征文件里第 i 帧的时间必须是 i / fps
 
@@ -182,8 +182,9 @@ def is_press(event: str) -> bool:
 def predicted_spans(presses: list[Press], key: str, end_t: float) -> list[tuple[float, float, list[Press]]]:
     """按输入显示层的点亮规则（tools/input_overlay/overlay_state.py），由记录推出某个格子应当亮着的时间段。
 
-    规则：按住期间亮着；每次按下之后至少亮 MIN_LIT_S（滚轮没有松开，每次亮 WHEEL_LIT_S）。重叠或间隔
-    不到 MERGE_GAP_S（录像里分辨不出）的时间段合成一段。返回 [(开始, 结束, 这一段里的按下)]，第一个按下开启这一段。
+    规则：按住期间亮着；每次按下之后至少亮 MIN_LIT_S（滚轮没有松开，每次亮 WHEEL_LIT_S）。重叠的时间段合成一段
+    （间隔很短、录像里可能分辨不出的相邻段，留给 _classify 按录像决定）。返回 [(开始, 结束, 这一段里的按下)]，
+    第一个按下开启这一段。
     """
     raw: list[tuple[float, float, Press]] = []
     evs = [p for p in presses if p.key == key]
@@ -195,7 +196,7 @@ def predicted_spans(presses: list[Press], key: str, end_t: float) -> list[tuple[
             raw.append((p.t, max(up, p.t + MIN_LIT_S), p))
     spans: list[tuple[float, float, list[Press]]] = []
     for a, b, p in sorted(raw, key=lambda x: x[0]):
-        if spans and a <= spans[-1][1] + MERGE_GAP_S:
+        if spans and a <= spans[-1][1]:
             s0, s1, ps = spans[-1]
             spans[-1] = (s0, max(s1, b), ps + [p])
         else:
@@ -206,41 +207,79 @@ def predicted_spans(presses: list[Press], key: str, end_t: float) -> list[tuple[
 def _classify(frames: list[Frame], fps: float, presses: list[Press]) -> tuple[int, int, list[str]]:
     """把「由记录推出的点亮时间段」与「录像里看到的点亮时间段」逐段对应，返回 (对上的段数, 矛盾数, 矛盾说明)。
 
-    一段对上 = 开始时刻之差在 [−MATCH_EARLY_S, +MATCH_LATE_S] 内，且结束时刻之差也在这个范围内
-    （结束超出录像的不比）。对上的段：第一个按下为 shown，并拥有这次亮起；段里其余按下为 merged。
-    推出的段在录像里没有 → 这一段的按下都是 missing；录像里的段推不出来 → 记录缺了按下。
-    录像开头 HEAD_SKIP_S 内开始的段不比较（第 0 帧之前的状态看不到）。
+    presses 要包含录像开始前 LOOKBACK_S 内的事件（第 0 帧时是否亮着取决于它们）。
+    - 录像里的段：第 0 帧就亮着的一段（从第 0 帧开始），以及之后每次从灭到亮的一段
+    - 推出的段开始于第 0 帧附近（≤ 1 帧 + MATCH_EARLY_S）时，可以对应「第 0 帧就亮着」的那段；否则对应
+      开始时刻相差 [−MATCH_EARLY_S, +MATCH_LATE_S] 内的一次亮起
+    - 推出的段在录像里没有对应的亮起，但紧跟在上一段之后（间隔 ≤ MERGE_GAP_S）且录像里上一段一直亮着没断：
+      按录像看是合成了一段，把它并进上一段
+    - 结束：推出的结束在录像结束前，录像里的结束必须在 [−MATCH_EARLY_S, +MATCH_LATE_S] 内；推出的段持续到录像
+      结束，录像里也必须亮到不早于（推出的结束 − MATCH_EARLY_S）
+    对上的段：第一个按下为 shown，拥有这次亮起；其余按下为 merged。推出的段录像里没有 → missing；
+    录像里的段推不出来 → 记录缺了按下。
     """
     n = len(frames)
     end_t = n / fps
     owned, bad, notes = 0, 0, []
     for p in presses:
         p.onset, p.status = None, ""
+
+    def seen_end_t(e: int) -> float:
+        return e / fps if e < n else math.inf
+
     for k in OVERLAY_KEYS:
         seen = [(i, lit_until(frames, k, i)) for i in onsets(frames, k)]
+        if frames[0].lit[k]:
+            seen.insert(0, (0, lit_until(frames, k, 0)))
         taken: set[int] = set()
-        for a, b, ps in predicted_spans(presses, k, end_t):
-            if a < HEAD_SKIP_S:
+        cur = None   # 当前对上的段：[录像亮起帧, 录像熄灭帧, 推出的结束, 按下列表]
+
+        def finish(c) -> None:
+            nonlocal bad
+            i, e, pend, _ = c
+            se = seen_end_t(e)
+            if pend < end_t - MATCH_LATE_S:
+                ok = -MATCH_EARLY_S <= se - pend <= MATCH_LATE_S
+            else:
+                ok = se >= min(pend, end_t) - MATCH_EARLY_S
+            if not ok:
+                bad += 1
+                notes.append(f"{frames[i].t:.2f}s 的 {k}：按记录应亮到 {min(pend, end_t):.2f}s，"
+                             f"录像里亮到 {min(se, end_t):.2f}s")
+
+        for a, b, ps in predicted_spans(presses, k, math.inf):
+            if b <= 0.0:
+                for p in ps:
+                    p.status = "merged"   # 整段都在录像开始之前
+                continue
+            if a <= 1.0 / fps + MATCH_EARLY_S:
+                cand = [(i, e) for i, e in seen if i not in taken and (i == 0 or frames[i].t - a <= MATCH_LATE_S)]
+            else:
+                cand = [(i, e) for i, e in seen
+                        if i not in taken and i > 0 and -MATCH_EARLY_S <= frames[i].t - a <= MATCH_LATE_S]
+            if cand:
+                if cur is not None:
+                    finish(cur)
+                i, e = min(cand, key=lambda x: abs(frames[x[0]].t - max(a, 0.0)))
+                taken.add(i)
+                cur = [i, e, b, ps]
+                ps[0].onset, ps[0].status = i, "shown"
+                for p in ps[1:]:
+                    p.status = "merged"
+                owned += 1
+                continue
+            if cur is not None and a - cur[2] <= MERGE_GAP_S and seen_end_t(cur[1]) >= a:
+                cur[2] = max(cur[2], b)
+                cur[3] += ps
                 for p in ps:
                     p.status = "merged"
                 continue
-            cand = [(i, e) for i, e in seen if i not in taken and -MATCH_EARLY_S <= frames[i].t - a <= MATCH_LATE_S]
-            if not cand:
-                for p in ps:
-                    p.status = "missing"
-                bad += 1
-                notes.append(f"按键记录里 {a:.2f}s 的 {k} 应当亮起，录像里没有")
-                continue
-            i, e = min(cand, key=lambda x: abs(frames[x[0]].t - a))
-            taken.add(i)
-            seen_end = e / fps if e < n else math.inf
-            if b < end_t - MATCH_LATE_S and not -MATCH_EARLY_S <= seen_end - b <= MATCH_LATE_S:
-                bad += 1
-                notes.append(f"{frames[i].t:.2f}s 的 {k}：按记录应亮到 {b:.2f}s，录像里亮到 {seen_end:.2f}s")
-            ps[0].onset, ps[0].status = i, "shown"
-            for p in ps[1:]:
-                p.status = "merged"
-            owned += 1
+            for p in ps:
+                p.status = "missing"
+            bad += 1
+            notes.append(f"按键记录里 {a:.2f}s 的 {k} 应当亮起，录像里没有")
+        if cur is not None:
+            finish(cur)
         for i, _ in seen:
             if i not in taken:
                 bad += 1
@@ -270,7 +309,7 @@ def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, 
     scored = []
     for j in range(-steps, steps + 1):
         off = j * ALIGN_STEP_S
-        ps = [Press(t - obs_start - off, k, e) for t, k, e in log if 0.0 <= t - obs_start - off <= end_t]
+        ps = [Press(t - obs_start - off, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - off <= end_t]
         owned, bad, _ = _classify(frames, fps, ps)
         scored.append((bad, -owned, j))
     best = min(scored)[:2]
@@ -279,17 +318,18 @@ def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, 
         return Timeline(0.0, 0, problems=["有两种相距较远的对齐同样可信，无法确定录像起点"])
     offset = (js[0] + js[-1]) / 2 * ALIGN_STEP_S
     # 细调：让「亮起 − 按下」的中位数为 0；细调后矛盾不能变多
-    ps = [Press(t - obs_start - offset, k, e) for t, k, e in log if 0.0 <= t - obs_start - offset <= end_t]
+    ps = [Press(t - obs_start - offset, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - offset <= end_t]
     _classify(frames, fps, ps)
     res = [frames[p.onset].t - p.t for p in ps if p.onset is not None]
     if res:
         fine = offset - statistics.median(res)
-        ps2 = [Press(t - obs_start - fine, k, e) for t, k, e in log if 0.0 <= t - obs_start - fine <= end_t]
+        ps2 = [Press(t - obs_start - fine, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - fine <= end_t]
         if _classify(frames, fps, ps2)[:2] == (-best[1], best[0]):
             offset = fine
     tl = Timeline(offset, 0)
-    tl.presses = [Press(t - obs_start - offset, k, e) for t, k, e in log if 0.0 <= t - obs_start - offset <= end_t]
-    owned, bad, notes = _classify(frames, fps, tl.presses)
+    ext = [Press(t - obs_start - offset, k, e) for t, k, e in log if -LOOKBACK_S <= t - obs_start - offset <= end_t]
+    owned, bad, notes = _classify(frames, fps, ext)
+    tl.presses = [p for p in ext if p.t >= 0.0]
     tl.pairs = owned
     if owned < MIN_PAIRS:
         tl.problems.append(f"按键记录与录像对不上（配对 {owned} 个）")

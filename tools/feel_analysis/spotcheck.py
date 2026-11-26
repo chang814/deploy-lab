@@ -49,7 +49,7 @@ def decode(video: str, wanted: list[int]) -> dict[int, np.ndarray]:
             out[n] = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
     finally:
         p.stdout.close()
-        if p.wait(timeout=60) != 0 and len(out) != len(set(wanted)):
+        if p.wait(timeout=60) != 0:
             raise SystemExit(f"ffmpeg 解码 {video} 失败（退出码 {p.returncode}）")
     return out
 
