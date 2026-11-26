@@ -7,6 +7,8 @@ const METAL: Color = Color(0.16, 0.17, 0.19)
 const DARK: Color = Color(0.09, 0.09, 0.10)
 const WOOD: Color = Color(0.45, 0.27, 0.13)
 const BLADE: Color = Color(0.78, 0.8, 0.83)
+const AK_WOOD: Color = Color(0.55, 0.27, 0.1)      # 上漆的桦木 / 胡桃木色
+const BAKELITE: Color = Color(0.32, 0.12, 0.06)    # 胶木（深红棕）
 
 
 static func _mat(c: Color, metallic: float = 0.6, rough: float = 0.45) -> StandardMaterial3D:
@@ -59,14 +61,27 @@ static func build(id: String) -> Node3D:
 	var dark: StandardMaterial3D = _mat(DARK, 0.3, 0.7)
 	match id:
 		"rifle":
-			_box(root, Vector3(0.05, 0.07, 0.42), Vector3(0, 0.03, -0.12), metal)            # 机匣
-			_cyl(root, 0.012, 0.36, Vector3(0, 0.045, -0.5), dark)                           # 枪管
-			_box(root, Vector3(0.055, 0.05, 0.2), Vector3(0, 0.02, -0.38), _mat(WOOD, 0.0, 0.8))   # 护木
-			_box(root, Vector3(0.04, 0.16, 0.06), Vector3(0, -0.07, -0.16), dark, Vector3(-18, 0, 0))  # 弯弹匣
-			_box(root, Vector3(0.035, 0.1, 0.04), Vector3(0, -0.04, 0.02), dark, Vector3(15, 0, 0))   # 握把
-			_box(root, Vector3(0.045, 0.06, 0.12), Vector3(0, 0.0, 0.13), _mat(WOOD, 0.0, 0.8))    # 枪托（缩短，避免伸出画面）
-			_box(root, Vector3(0.01, 0.03, 0.01), Vector3(0, 0.075, -0.62), dark)            # 准星
-			_muzzle(root, Vector3(0, 0.045, -0.69))
+			# AK-47 造型：按现实枪械的结构特征用基本形状自建（不使用任何游戏模型）。
+			# 冲压机匣 + 防尘盖、上下木护木、导气管与导气箍、斜切枪口、前准星、表尺座、向前弯的弹匣、胶木握把、木枪托
+			var wood: StandardMaterial3D = _mat(AK_WOOD, 0.0, 0.55)
+			var bakelite: StandardMaterial3D = _mat(BAKELITE, 0.0, 0.6)
+			_box(root, Vector3(0.046, 0.058, 0.30), Vector3(0, 0.028, -0.10), metal)             # 机匣
+			_box(root, Vector3(0.042, 0.02, 0.27), Vector3(0, 0.066, -0.09), dark)               # 防尘盖
+			_box(root, Vector3(0.012, 0.016, 0.03), Vector3(0.026, 0.04, -0.13), dark)           # 拉机柄
+			_box(root, Vector3(0.034, 0.026, 0.045), Vector3(0, 0.072, -0.27), metal)            # 表尺座
+			_box(root, Vector3(0.052, 0.046, 0.17), Vector3(0, 0.026, -0.335), wood)             # 下护木
+			_box(root, Vector3(0.038, 0.026, 0.14), Vector3(0, 0.066, -0.33), wood)              # 上护木
+			_cyl(root, 0.011, 0.13, Vector3(0, 0.068, -0.465), metal)                            # 导气管
+			_box(root, Vector3(0.03, 0.045, 0.03), Vector3(0, 0.055, -0.545), dark)              # 导气箍
+			_cyl(root, 0.0105, 0.29, Vector3(0, 0.036, -0.56), dark)                             # 枪管
+			_box(root, Vector3(0.012, 0.05, 0.02), Vector3(0, 0.07, -0.675), dark)               # 前准星座
+			_cyl(root, 0.014, 0.05, Vector3(0, 0.036, -0.725), dark)                             # 斜切枪口
+			_box(root, Vector3(0.036, 0.10, 0.065), Vector3(0, -0.045, -0.19), dark, Vector3(8, 0, 0))     # 弹匣上段
+			_box(root, Vector3(0.034, 0.10, 0.06), Vector3(0, -0.125, -0.225), dark, Vector3(30, 0, 0))    # 弹匣下段（向前弯）
+			_box(root, Vector3(0.008, 0.008, 0.07), Vector3(0, -0.012, -0.06), dark)             # 扳机护圈
+			_box(root, Vector3(0.03, 0.09, 0.038), Vector3(0, -0.045, 0.0), bakelite, Vector3(-18, 0, 0))  # 握把
+			_box(root, Vector3(0.04, 0.062, 0.22), Vector3(0, -0.012, 0.15), wood, Vector3(-7, 0, 0))       # 枪托（向后下倾）
+			_muzzle(root, Vector3(0, 0.036, -0.755))
 		"pistol":
 			_box(root, Vector3(0.035, 0.045, 0.19), Vector3(0, 0.04, -0.07), metal)          # 套筒
 			_box(root, Vector3(0.032, 0.03, 0.15), Vector3(0, 0.005, -0.05), dark)           # 枪身

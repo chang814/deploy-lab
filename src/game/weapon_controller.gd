@@ -5,8 +5,9 @@ extends Node3D
 ##
 ## 输入：1 / 2 / 3 选槽位，Q 切到上一把，滚轮切换，左键开火（按住），R 换弹。
 
-const HIP_POS: Vector3 = Vector3(0.15, -0.15, -0.4)    # 模型在相机空间里的位置（表现参数，不是手感时长）
-const VM_SCALE: float = 0.62                           # 模型缩放
+const HIP_POS: Vector3 = Vector3(0.19, -0.2, -0.42)   # 模型在相机空间里的位置（表现参数，不是手感时长）
+const HIP_YAW_DEG: float = 10.0                        # 枪口略朝画面中心，露出枪身右侧
+const VM_SCALE: float = 0.78                           # 模型缩放
 
 @export var look_path: NodePath = ^"../.."
 
@@ -124,7 +125,7 @@ func _process(dt_s: float) -> void:
 	_kick = move_toward(_kick, 0.0, cfg.viewmodel["kick_recover_mps"] * dt_s)
 	m.scale = Vector3.ONE * VM_SCALE
 	m.position = HIP_POS + Vector3(0, -drop, _kick)
-	m.rotation_degrees = Vector3(_kick * cfg.viewmodel["kick_pitch_deg_per_m"], 0, 0)
+	m.rotation_degrees = Vector3(_kick * cfg.viewmodel["kick_pitch_deg_per_m"], HIP_YAW_DEG, 0)
 	_flash_left_s = maxf(_flash_left_s - dt_s, 0.0)
 	_flash.light_energy = 6.0 if _flash_left_s > 0.0 else 0.0
 
