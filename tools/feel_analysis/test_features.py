@@ -81,6 +81,13 @@ class FrameTimesTest(unittest.TestCase):
     def test_late_first_frame_rejected(self):
         self.assertTrue(any("第一帧" in p for p in ft.check_timeline([0.1 + i / 60 for i in range(60)], 60.0)))
 
+    def test_codex_r3_nan_rejected(self):
+        times = [i / 60 for i in range(600)]
+        times[200] = float("nan")
+        self.assertTrue(ft.check_timeline(times, 60.0))
+        self.assertTrue(ft.check_timeline([float("nan")] + times[1:], 60.0))
+        self.assertTrue(ft.check_timeline(times, float("nan")))
+
     def test_empty_rejected(self):
         self.assertTrue(ft.check_timeline([], 60.0))
 

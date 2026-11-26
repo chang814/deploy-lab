@@ -7,19 +7,22 @@
   所以不能用它数按键或判断左键状态
 
 步骤：
-1. 对齐：OBS 日志里的开录时刻（毫秒）给出录像第 0 帧的大致 unix 时间；在 ±ALIGN_SEARCH_S 内用「记录时间 −
-   格子亮起时间」的众数求出精确偏移。录像里**每一次**格子亮起都必须在记录里找到对应的按下，否则整段录像作废
+1. 对齐：OBS 日志里的开录时刻（毫秒）给出录像第 0 帧的大致 unix 时间；在 ±ALIGN_SEARCH_S 内逐个试偏移，
+   取「物理模型」矛盾最少的那个（见 _classify）。最优偏移必须唯一（连成一段）；录像里**每一次**格子亮起都必须
+   在记录里找到开启它的按下，down / up 必须交替，否则整段录像作废
 2. 逐次切枪：遍历记录里的切枪键按下，从人工声明的初始武器（--initial）开始推算武器。触发键必须有**自己的**
    格子亮起（不是被合并进上一次亮起的），起点 s = 那一次亮起的帧
 3. 终点 f：s 之后、下一次切枪按键之前的第一声枪响（音量从低于到不低于 AUDIO_SHOT_MIN），在它之前
    AV_MIN_LAG–AV_MAX_LAG 帧内开始的火光（火光指标 ≥ FLASH_MIN）。窗口内必须**恰好一段**火光开始，
-   且连续至少 MIN_FLASH_FRAMES 帧；有两段（例如旁边的橙色特效）就无法确定是哪一段，作废
+   且连续至少 MIN_FLASH_FRAMES 帧；有两段（例如旁边的橙色特效）就无法确定是哪一段，作废。
+   已知局限：橙色特效与真实火光无缝重叠时没有第二个上升沿，工具分不出来，靠人工逐帧抽查兜底
 4. 时长 = (f − s) / fps × timescale
 
 逐次检查（任何一条不满足就作废，并写明原因）：
 - 切枪前后的武器与该项要求一致
 - 切枪键按下时左键没有按着（按记录）
-- 开火时左键按着，且这一次按住开始于切枪之后、比火光至少早 MIN_LEAD_S 秒（按记录）
+- 开火时左键按着，且这一次按住开始于切枪之后、比火光至少早 MIN_LEAD_S 秒（按记录）；
+  录像里左键格子在这段时间也一直亮着（与记录一致）
 - 从上一次切枪按键到火光之间，记录里的按下都在录像里显示出来了（被合并进同一键亮起期间的除外）
 
 只处理有枪口火光的项目。挥刀（D）、检视（F、G）、拔刀（K1）需要另外的判据，不在这里。
@@ -52,10 +55,12 @@ MIN_LEAD_S = 0.2            # 这次按住左键至少要比火光早这么多�
 FLASH_MIN = 100             # 火光帧的最低指标（实测开枪 650–2200，非开枪帧为 0 或个位数）
 MIN_FLASH_FRAMES = 3        # 火光至少连续这么多帧（慢动作下真实火光持续多帧）
 AUDIO_SHOT_MIN = 2500       # 枪声的音量下限（实测：枪声 3800–14500，拔枪等声音不超过约 1000）
-AV_MIN_LAG, AV_MAX_LAG = 1, 8   # 枪声开始相对火光开始的延迟窗口（帧），实测 3–5
+AV_MIN_LAG, AV_MAX_LAG = 2, 7   # 枪声开始相对火光开始的延迟窗口（帧）；第一批 33 次实测 3–6（另有 1 次 2）
 ALIGN_SEARCH_S = 0.15       # 对齐时，在 OBS 开录时刻附近搜索的范围
-ALIGN_BIN_S = 0.01
-MATCH_TOL_S = 0.05          # 对齐后，一次按下与一次格子亮起的对应容差
+ALIGN_STEP_S = 0.002
+MATCH_EARLY_S = 0.03        # 对齐后，格子亮起最多比按下早这么多（第一批实测最早 −19 ms）
+MATCH_LATE_S = 0.07         # 对齐后，格子亮起最多比按下晚这么多（第一批实测最晚 +47 ms）
+INSIDE_MARGIN_S = 0.03      # 按下前这么久格子已经亮着，才算「并进已有的亮起」
 MIN_PAIRS = 3
 MAX_FRAME_T_ERR_S = 0.0005  # 特征文件里第 i 帧的时间必须是 i / fps
 
@@ -108,7 +113,9 @@ def read_features(path: str) -> tuple[list[Frame], float]:
 
 
 def timeline_problems(frames: list[Frame], fps: float) -> list[str]:
-    bad = [i for i, fr in enumerate(frames) if abs(fr.t - i / fps) > MAX_FRAME_T_ERR_S]
+    if not (math.isfinite(fps) and fps > 0):
+        return [f"帧率 {fps} 不合法"]
+    bad = [i for i, fr in enumerate(frames) if not abs(fr.t - i / fps) <= MAX_FRAME_T_ERR_S]
     return [f"第 {bad[0]} 帧的时间戳不是 帧号 / fps，时间线不连续"] if bad else []
 
 
@@ -168,54 +175,87 @@ def is_press(event: str) -> bool:
     return event in ("down", "wheel")
 
 
-def align(frames: list[Frame], log: list[tuple[float, str, str]], obs_start: float) -> tuple[float | None, int]:
-    """录像第 0 帧 = obs_start + offset。返回 (offset, 参与估计的配对数)；对不上时 offset 为 None。"""
-    diffs = []
+def _classify(frames: list[Frame], fps: float, presses: list[Press]) -> tuple[int, int, list[str]]:
+    """按「物理模型」给已换算到录像时间的按下分类，返回 (认领了亮起的按下数, 矛盾数, 矛盾说明)。
+
+    一次按下发生时，如果同一格**之前**就亮着（按下前 INSIDE_MARGIN_S 那一帧已亮），它被并进这次亮起（merged）；
+    否则它必须开启一次新的亮起：认领 [按下 − MATCH_EARLY_S, 按下 + MATCH_LATE_S] 内同键的一次亮起（shown），
+    找不到就是漏显示（missing）。录像里没有被任何按下认领的亮起 = 记录里缺了这次按下。
+    """
+    n = len(frames)
+    owned, bad, notes = 0, 0, []
     for k in OVERLAY_KEYS:
-        lt = [t - obs_start for t, kk, e in log if kk == k and is_press(e)]
-        for i in onsets(frames, k):
-            diffs += [d - frames[i].t for d in lt if abs(d - frames[i].t) <= ALIGN_SEARCH_S]
-    if not diffs:
-        return None, 0
-    bins: dict[int, int] = {}
-    for d in diffs:
-        bins[round(d / ALIGN_BIN_S)] = bins.get(round(d / ALIGN_BIN_S), 0) + 1
-    best = max(bins.values())
-    modes = [b for b, n in bins.items() if n == best]
-    if max(modes) - min(modes) > 1:
-        return None, 0   # 两个相距较远的偏移一样可信：无法确定
-    mode = statistics.mean(modes) * ALIGN_BIN_S
-    near = [d for d in diffs if abs(d - mode) <= 2 * ALIGN_BIN_S]
-    return statistics.median(near), len(near)
+        ons = onsets(frames, k)
+        taken: set[int] = set()
+        for p in (q for q in presses if q.key == k and is_press(q.event)):
+            p.onset, p.status = None, ""
+            before = int(math.floor((p.t - INSIDE_MARGIN_S) * fps))
+            if 0 <= before < n and frames[before].lit[k]:
+                p.status = "merged"
+                continue
+            cand = [i for i in ons if i not in taken and -MATCH_EARLY_S <= frames[i].t - p.t <= MATCH_LATE_S]
+            if cand:
+                p.onset = min(cand, key=lambda i: abs(frames[i].t - p.t))
+                taken.add(p.onset)
+                p.status = "shown"
+                owned += 1
+            else:
+                p.status = "missing"
+                bad += 1
+        for i in ons:
+            if i not in taken:
+                bad += 1
+                notes.append(f"{frames[i].t:.2f}s 的 {k} 亮起在按键记录里没有对应的按下")
+    return owned, bad, notes
+
+
+def _event_problems(log: list[tuple[float, str, str]], obs_start: float, offset: float, end_t: float) -> list[str]:
+    """每个键的 down / up 必须交替出现；录像时间范围内出现重复按下或无主松开，说明记录不完整。"""
+    out = []
+    state: dict[str, str] = {}
+    for t, k, e in log:
+        if e not in ("down", "up"):
+            continue
+        v = t - obs_start - offset
+        if state.get(k) == e and 0.0 <= v <= end_t:
+            out.append(f"按键记录里 {v:.2f}s 的 {k} 连续两次 {e}，记录不完整")
+        state[k] = e
+    return out
 
 
 def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, str]], obs_start: float) -> Timeline:
-    offset, pairs = align(frames, log, obs_start)
-    if offset is None or pairs < MIN_PAIRS:
-        return Timeline(0.0, pairs, problems=[f"按键记录与录像对不上（配对 {pairs} 个）"])
-    tl = Timeline(offset, pairs)
+    """录像第 0 帧 = obs_start + offset。在 ±ALIGN_SEARCH_S 内逐个试 offset，取物理模型矛盾最少的；
+    矛盾最少的 offset 必须连成一段（否则有两种对齐同样可信，拒绝），最后在这一段的中点上分类。"""
     end_t = len(frames) / fps
-    tl.presses = [Press(t - obs_start - offset, k, e) for t, k, e in log
-                  if 0.0 <= t - obs_start - offset <= end_t]
-    # 每一次格子亮起认领离它最近的一次同键按下
-    for k in OVERLAY_KEYS:
-        cand = [p for p in tl.presses if p.key == k and is_press(p.event)]
-        for i in onsets(frames, k):
-            near = [p for p in cand if p.onset is None and abs(p.t - frames[i].t) <= MATCH_TOL_S]
-            if not near:
-                tl.problems.append(f"{frames[i].t:.2f}s 的 {k} 亮起在按键记录里没有对应的按下")
-                continue
-            min(near, key=lambda p: abs(p.t - frames[i].t)).onset = i
-    # 没认领到亮起的按下：落在同键亮起期间 = 被合并；否则 = 漏显示
-    for p in tl.presses:
-        if not is_press(p.event):
-            continue
-        if p.onset is not None:
-            p.status = "shown"
-            continue
-        f = min(len(frames) - 1, max(0, int(math.floor(p.t * fps))))
-        lo, hi = max(0, f - 1), min(len(frames), f + int(MATCH_TOL_S * fps) + 2)
-        p.status = "merged" if any(frames[j].lit[p.key] for j in range(lo, hi)) else "missing"
+    steps = int(round(ALIGN_SEARCH_S / ALIGN_STEP_S))
+    scored = []
+    for j in range(-steps, steps + 1):
+        off = j * ALIGN_STEP_S
+        ps = [Press(t - obs_start - off, k, e) for t, k, e in log if 0.0 <= t - obs_start - off <= end_t]
+        owned, bad, _ = _classify(frames, fps, ps)
+        scored.append((bad, -owned, j))
+    best = min(scored)[:2]
+    js = sorted(j for b, o, j in scored if (b, o) == best)
+    if js[-1] - js[0] != len(js) - 1:
+        return Timeline(0.0, 0, problems=["有两种相距较远的对齐同样可信，无法确定录像起点"])
+    offset = (js[0] + js[-1]) / 2 * ALIGN_STEP_S
+    # 细调：让「亮起 − 按下」的中位数为 0；细调后矛盾不能变多
+    ps = [Press(t - obs_start - offset, k, e) for t, k, e in log if 0.0 <= t - obs_start - offset <= end_t]
+    _classify(frames, fps, ps)
+    res = [frames[p.onset].t - p.t for p in ps if p.onset is not None]
+    if res:
+        fine = offset - statistics.median(res)
+        ps2 = [Press(t - obs_start - fine, k, e) for t, k, e in log if 0.0 <= t - obs_start - fine <= end_t]
+        if _classify(frames, fps, ps2)[:2] == (-best[1], best[0]):
+            offset = fine
+    tl = Timeline(offset, 0)
+    tl.presses = [Press(t - obs_start - offset, k, e) for t, k, e in log if 0.0 <= t - obs_start - offset <= end_t]
+    owned, bad, notes = _classify(frames, fps, tl.presses)
+    tl.pairs = owned
+    if owned < MIN_PAIRS:
+        tl.problems.append(f"按键记录与录像对不上（配对 {owned} 个）")
+    tl.problems += notes
+    tl.problems += _event_problems(log, obs_start, offset, end_t)
     return tl
 
 
@@ -228,6 +268,13 @@ def left_held_since(presses: list[Press], t: float) -> float | None:
         if p.key == "L":
             since = p.t if p.event == "down" else None
     return since
+
+
+def left_shown_held(frames: list[Frame], fps: float, since: float, until: float) -> bool:
+    """录像里左键格子在 [since + MATCH_LATE_S, until] 是否一直亮着（与记录说的「按着」一致）。"""
+    a = max(0, int(math.ceil((since + MATCH_LATE_S) * fps)))
+    b = min(len(frames) - 1, int(math.floor(until * fps)))
+    return all(frames[i].lit["L"] for i in range(a, b + 1))
 
 
 # ---------- 火光 ----------
@@ -302,6 +349,9 @@ def analyze(frames: list[Frame], fps: float, item: str, timescale: float,
             continue
         if hold <= p.t:
             c.reason = "开火时的这次按住在切枪之前就开始了"
+            continue
+        if not left_shown_held(frames, fps, hold, frames[f].t):
+            c.reason = "按键记录说开火时左键按着，但录像里左键格子没有一直亮着（记录可能缺了松开）"
             continue
         if frames[f].t - hold < MIN_LEAD_S:
             c.reason = f"这次按住左键只比火光早 {(frames[f].t - hold) * 1000:.0f} ms，可能按晚了"

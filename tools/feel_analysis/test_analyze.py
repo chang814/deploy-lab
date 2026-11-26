@@ -51,6 +51,12 @@ def timeline(frames, presses, extra=(), shift=0.0):
     return an.build_timeline(frames, FPS, log_from(presses, extra, shift), OBS)
 
 
+class Base(unittest.TestCase):
+    def invalid(self, c, text):
+        self.assertFalse(c.valid, f"应作废：{text}")
+        self.assertIn(text, c.reason)
+
+
 class TrackerTest(unittest.TestCase):
     def test_onset_ignores_already_lit_first_frame(self):
         fr = make(20, {"1": [(0, 5), (10, 12)]})
@@ -123,11 +129,21 @@ class FlashTest(unittest.TestCase):
         self.assertEqual(an.find_flash(fr, 10, 800)[0], 700)
 
     def test_codex_r2_nearby_orange_makes_flash_ambiguous(self):
-        # 第 2 轮反例：无声橙色 [690,693)、真实火光 [694,704)、枪声从 698 开始。两段都在配对窗口内 → 作废
+        # 第 2 轮反例：无声橙色 [690,693)、真实火光 [694,704)、枪声从 698 开始。
+        # 配对窗口按实测收窄为 2–7 帧后，690（早 8 帧）不在窗口内，选中真实火光 694
         fr = make(800, {}, flashes=[(690, 693), (694, 704)], sound=False, extra_audio=[(698, 708)])
+        self.assertEqual(an.find_flash(fr, 10, 800)[0], 694)
+        # 橙色特效落进窗口（691，早 7 帧）：两段火光开始都可能是开枪 → 作废
+        fr = make(800, {}, flashes=[(691, 693), (694, 704)], sound=False, extra_audio=[(698, 708)])
         f, why = an.find_flash(fr, 10, 800)
         self.assertIsNone(f)
         self.assertIn("无法确定", why)
+
+    def test_codex_r3_overlapping_orange_outside_lag_window(self):
+        # 第 3 轮反例：橙色特效从 696 一直连到真实火光 [700,710)，枪声 704。只有一个上升沿 696，
+        # 但它比枪声早 8 帧，超出实测的 2–7 帧 → 不确认（重叠更紧的情况靠人工抽查）
+        fr = make(800, {}, flashes=[(696, 710)], sound=False, extra_audio=[(704, 714)])
+        self.assertIsNone(an.find_flash(fr, 10, 800)[0])
 
     def test_codex_pairing_does_not_cross_end(self):
         # 第 695 帧橙色、第 700 帧下一次切枪、第 704 帧枪声：不能确认前一个周期
@@ -173,14 +189,49 @@ class TimelineTest(unittest.TestCase):
         tl = timeline(make(600, self.P), self.P, extra=[(50 / FPS, "2", "down"), (52 / FPS, "2", "up")])
         self.assertEqual([p.status for p in tl.presses if p.key == "2" and p.event == "down"], ["missing"])
 
+    def test_codex_r3_merged_presses_cannot_shift_alignment(self):
+        # 第 3 轮反例：F 在 30/60/90 帧亮起，每次亮起期间又快速按了两次（f+2、f+2.2 帧）；
+        # Q 在 120 帧亮起，记录里 120 与 122.1 帧各一次。旧版投票被合并的按下带偏到 +30 ms
+        overlay = {"F": [(30, 40), (60, 70), (90, 100)], "Q": [(120, 130)], "L": [(150, 320)]}
+        log = {"F": [(30, 31), (60, 61), (90, 91)], "Q": [(120, 121)], "L": [(150, 320)]}
+        extra = []
+        for f in (30, 60, 90):
+            extra += [((f + 2) / FPS, "F", "down"), ((f + 2.1) / FPS, "F", "up"),
+                      ((f + 2.2) / FPS, "F", "down"), ((f + 2.3) / FPS, "F", "up")]
+        extra += [(122.1 / FPS, "Q", "down"), (122.5 / FPS, "Q", "up")]
+        fr = make(400, overlay, flashes=[(300, 340)])
+        tl = timeline(fr, log, extra)
+        self.assertEqual(tl.problems, [])
+        self.assertAlmostEqual(tl.offset, -DISPLAY_LAG, delta=0.004)
+        qs = [p for p in tl.presses if p.key == "Q" and p.event == "down"]
+        self.assertEqual([p.status for p in qs], ["shown", "merged"])
+        self.assertFalse(any(c.valid for c in an.analyze(fr, FPS, "E1", 0.1, ("glock", "ak"), tl)))
+
+    def test_codex_r3_unshown_press_before_onset_is_missing(self):
+        # 第 3 轮反例：R 在 198 帧按下、199 帧松开，完全没显示；200 帧另一次 R 才亮起。必须有一次是漏显示
+        # （另有 self.P 的按键把对齐钉住；只有这两次 R 时，「显示延迟 35 ms」也能自洽地解释它们）
+        p = dict(self.P, R=[(200, 210)])
+        tl = timeline(make(600, p), p, [(198 / FPS, "R", "down"), (199 / FPS, "R", "up")])
+        self.assertIn("missing", [p.status for p in tl.presses if p.key == "R" and p.event == "down"])
+
+    def test_double_down_is_inconsistent(self):
+        tl = timeline(make(600, self.P), self.P, extra=[(103 / FPS, "1", "down")])
+        self.assertTrue(any("连续两次" in p for p in tl.problems))
+
     def test_frame_times_must_be_continuous(self):
         fr = make(100, {})
         self.assertEqual(an.timeline_problems(fr, FPS), [])
         fr[50] = an.Frame(fr[50].t + 0.01, fr[50].lit, 0)
         self.assertTrue(an.timeline_problems(fr, FPS))
 
+    def test_codex_r3_nan_time_is_rejected(self):
+        fr = make(100, {})
+        fr[50] = an.Frame(float("nan"), fr[50].lit, 0)
+        self.assertTrue(an.timeline_problems(fr, FPS))
+        self.assertTrue(an.timeline_problems(make(10, {}), float("nan")))
 
-class AnalyzeTest(unittest.TestCase):
+
+class AnalyzeTest(Base):
     # F 与切枪无关，只是让对齐有足够的配对
     BASE = {"F": [(30, 36)], "3": [(10, 16)], "1": [(100, 106)], "L": [(150, 320)]}
 
@@ -200,15 +251,15 @@ class AnalyzeTest(unittest.TestCase):
 
     def test_left_held_before_trigger_is_invalid(self):
         cs = self.run_cycle(presses={"L": [(90, 320)]})
-        self.assertIn("左键已经按着", cs[0].reason)
+        self.invalid(cs[0], "左键已经按着")
 
     def test_left_pressed_late_is_invalid(self):
         cs = self.run_cycle(presses={"L": [(295, 320)]})
-        self.assertIn("按晚", cs[0].reason)
+        self.invalid(cs[0], "按晚")
 
     def test_codex_early_tap_does_not_hide_late_press(self):
         cs = self.run_cycle(presses={"L": [(150, 156), (296, 340)]})
-        self.assertIn("按晚", cs[0].reason)
+        self.invalid(cs[0], "按晚")
 
     def test_codex_r2_merged_taps_do_not_hide_late_press(self):
         # 第 2 轮反例：280/285/290 三次轻点被输入显示层合成一次亮起，295 才真正按住，300 开火。
@@ -219,15 +270,27 @@ class AnalyzeTest(unittest.TestCase):
                 (292 / FPS, "L", "up"), (295 / FPS, "L", "down"), (340 / FPS, "L", "up")]
         cs = self.run_cycle(presses=overlay, log_presses=log, log_extra=taps)
         self.assertFalse(cs[0].valid)
-        self.assertIn("按晚", cs[0].reason)
+        self.invalid(cs[0], "按晚")
+
+    def test_codex_r3_missing_left_release_is_invalid(self):
+        # 第 3 轮反例：左键格子只亮于 [150,160)，记录里有按下、缺了松开；300 帧开火
+        overlay = {"L": [(150, 160)]}
+        log = {k: v for k, v in self.BASE.items() if k != "L"}
+        cs = self.run_cycle(presses=overlay, log_presses=log, log_extra=[(150 / FPS, "L", "down")])
+        self.invalid(cs[0], "没有一直亮着")
+
+    def test_codex_r3_unshown_press_invalidates_cycle(self):
+        overlay = {"R": [(200, 210)]}
+        cs = self.run_cycle(presses=overlay, log_extra=[(198 / FPS, "R", "down"), (199 / FPS, "R", "up")])
+        self.invalid(cs[0], "没有显示")
 
     def test_left_released_before_shot_is_invalid(self):
         cs = self.run_cycle(presses={"L": [(150, 200)]})
-        self.assertIn("没有按着", cs[0].reason)
+        self.invalid(cs[0], "没有按着")
 
     def test_wrong_direction_is_invalid(self):
         cs = self.run_cycle(presses={"3": [], "2": [(10, 16)]})
-        self.assertIn("方向", cs[0].reason)
+        self.invalid(cs[0], "方向")
 
     def test_unknown_start_is_invalid_unless_declared(self):
         self.assertFalse(self.run_cycle(presses={"3": []})[0].valid)
@@ -235,27 +298,32 @@ class AnalyzeTest(unittest.TestCase):
         self.assertTrue(cs[0].valid, cs[0].reason)
 
     def test_no_shot_is_invalid(self):
-        self.assertIn("没有开枪", self.run_cycle(flashes=())[0].reason)
+        self.invalid(self.run_cycle(flashes=())[0], "没有开枪")
 
     def test_gunshot_but_no_flash_reason(self):
         cs = self.run_cycle(flashes=(), extra_audio=[(300, 310)])
-        self.assertIn("没有找到与之配对的火光", cs[0].reason)
+        self.invalid(cs[0], "没有找到与之配对的火光")
 
     def test_codex_merged_double_press(self):
         # 两次快速按 1 合成一次亮起：第一次的窗口在第二次按下前结束（找不到开枪）；第二次没有自己的亮起
-        cs = self.run_cycle(log_extra=[(103 / FPS, "1", "down"), (104 / FPS, "1", "up")])
+        # 记录里第一次按 1 在第 101 帧就松开了，第 103 帧又按下：格子仍是一次亮起 [100,106)
+        log = dict(self.BASE, **{"1": [(100, 101)]})
+        cs = self.run_cycle(log_presses=log, log_extra=[(103 / FPS, "1", "down"), (104 / FPS, "1", "up")])
         self.assertEqual(len(cs), 2)
-        self.assertIn("没有开枪", cs[0].reason)
-        self.assertIn("没有自己的格子亮起", cs[1].reason)
+        self.assertFalse(cs[0].valid)
+        self.assertFalse(cs[1].valid)
+        self.invalid(cs[0], "没有开枪")
+        self.invalid(cs[1], "没有自己的格子亮起")
 
     def test_codex_r2_merged_q_history_is_tracked_from_log(self):
         # 第 2 轮反例：第 10 帧按 Q，第 13 帧又按了一次 Q 被合并进同一次亮起。录像只看到一次 Q，
         # 但记录里是两次：手里仍是 AK。第 100 帧的 Q 是 AK → Glock，不是 E1 要的 Glock → AK
         p = {"Q": [(10, 16), (100, 106)], "L": [(150, 320)]}
         fr = make(400, p, flashes=[(300, 340)])
-        tl = timeline(fr, p, [(13 / FPS, "Q", "down"), (14 / FPS, "Q", "up")])
+        tl = timeline(fr, dict(p, Q=[(10, 11), (100, 106)]), [(13 / FPS, "Q", "down"), (14 / FPS, "Q", "up")])
+        self.assertEqual(tl.problems, [])
         cs = an.analyze(fr, FPS, "E1", 0.1, ("ak", "glock"), tl)
-        self.assertIn("方向", cs[-1].reason)
+        self.invalid(cs[-1], "方向")
         self.assertEqual(an.analyze(fr, FPS, "E2", 0.1, ("ak", "glock"), tl)[-1].reason, "")
 
     def test_missing_display_near_cycle_is_invalid(self):
@@ -264,7 +332,7 @@ class AnalyzeTest(unittest.TestCase):
 
     def test_missing_display_of_left_button_is_invalid(self):
         cs = self.run_cycle(log_extra=[(250 / FPS, "R", "down"), (252 / FPS, "R", "up")])
-        self.assertIn("没有显示", cs[0].reason)
+        self.invalid(cs[0], "没有显示")
 
     def test_whole_video_rejected_on_timeline_problem(self):
         p = dict(self.BASE)

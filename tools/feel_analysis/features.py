@@ -15,6 +15,7 @@
 
 import argparse
 import csv
+import math
 import json
 import subprocess
 import sys
@@ -95,10 +96,15 @@ def check_timeline(times: list[float], fps: float) -> list[str]:
     """逐帧时间戳必须从起点开始、按 1/fps 等间隔连续（不丢帧、不重复、不变速）。"""
     if not times:
         return ["读不到视频帧时间戳"]
+    if not (math.isfinite(fps) and fps > 0):
+        return [f"帧率 {fps} 不合法"]
     step = 1.0 / fps
-    bad = [i for i in range(1, len(times)) if abs(times[i] - times[i - 1] - step) > MAX_FRAME_STEP_ERR_S]
+    # 写成「不满足 ≤」：NaN 与任何数比较都为假，这样非有限值也会被拒绝
+    bad = [i for i in range(1, len(times)) if not abs(times[i] - times[i - 1] - step) <= MAX_FRAME_STEP_ERR_S]
     problems = []
-    if abs(times[0]) > MAX_START_SKEW_S:
+    if not all(math.isfinite(t) for t in times):
+        problems.append("有非有限的帧时间戳")
+    if not abs(times[0]) <= MAX_START_SKEW_S:
         problems.append(f"第一帧时间戳为 {times[0]:.4f} s，不是 0")
     if bad:
         problems.append(f"有 {len(bad)} 处帧间隔不是 1/{fps:g} 秒（第一处在第 {bad[0]} 帧）")
