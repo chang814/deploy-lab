@@ -18,6 +18,7 @@
 - 原创练习地图分区中文显示名 `data/map/zone_names.zh-CN.json`（Z0–Z6 共 7 个训练分区）
 - P0-4 引导测试模式：屏幕顶部逐步提示操作，自动填写备注、计数并切换步骤（`data/test_plan.json`）；`--log`、`--plan` 启动参数；比对改为按毫秒时间戳配对，可合并多次测试
 - P0-4 实测报告 `spikes/raw-input/REPORT.md` 与原始数据：已测条件下 50 个有效轮次与 Raw Input 完全一致
+- P0-5 手感测量录制指引 `docs/measurement/p0-5-guide.md` 与本地服务器配置 `tools/cs2/mcs_measure.cfg`（由人类复制进 CS2）
 
 ### 变更
 - 项目更名为 mcs（仓库 chang814/mcs，本地主文件夹 `D:\桌面\mcs`）
