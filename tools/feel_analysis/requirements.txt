@@ -1,0 +1,3 @@
+# tools/feel_analysis 的 Python 依赖（另需系统里有 ffmpeg / ffprobe）
+numpy==2.4.6
+pillow==12.2.0   # 只有 spotcheck.py（人工抽查）用到
