@@ -38,5 +38,22 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1.0, 16, Color(1, 1, 1, 0.8))
 
 
+	var weapons: WeaponController = get_tree().current_scene.get_node_or_null("Player/Look/Camera3D/Weapons") as WeaponController if is_inside_tree() else null
+	if weapons != null and weapons.cfg != null:
+		var st: WeaponState = weapons.state
+		var w: Dictionary = st.weapons[st.current]
+		var ammo_text: String = "%d / inf" % st.ammo[st.current] if int(w["magazine"]) > 0 else "-"
+		var status: String = ["DRAWING", "", "RELOADING"][st.state]
+		var line1: String = "%s  %s  %s" % [w["name"], ammo_text, status]
+		var line2: String = "hits %d / shots %d" % [weapons.hits, weapons.shots]
+		var font: Font = get_theme_default_font()
+		for i: int in 2:
+			var t: String = [line1, line2][i]
+			var fs: int = 26 if i == 0 else 16
+			var tw: float = font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1.0, fs).x
+			draw_string(font, Vector2(size.x - tw - 16.0, size.y - 46.0 + i * 26.0), t,
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, fs, Color(1, 1, 1, 0.9))
+
+
 func _process(_delta_s: float) -> void:
 	queue_redraw()

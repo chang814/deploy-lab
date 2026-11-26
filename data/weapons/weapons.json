@@ -1,0 +1,39 @@
+{
+	"_comment": "武器参数（秒、米）。draw_s 来自 P0-5 第一批：切枪到第一发约 1.000 s 再加 0–1 个 tick 的等待（模拟以 tick_rate_hz 运行，等待自然产生），V 项录好后再校准（#38）；刀的拔出时长尚未测量，暂用 1.0。射速、弹匣、换弹时间取公开资料的近似值，尚未实测。",
+	"tick_rate_hz": 64,
+	"weapons": [
+		{
+			"id": "rifle",
+			"name": "Rifle",
+			"slot": 1,
+			"draw_s": 1.0,
+			"fire_interval_s": 0.1,
+			"automatic": true,
+			"magazine": 30,
+			"reload_s": 2.5,
+			"range_m": 200.0
+		},
+		{
+			"id": "pistol",
+			"name": "Pistol",
+			"slot": 2,
+			"draw_s": 1.0,
+			"fire_interval_s": 0.15,
+			"automatic": false,
+			"magazine": 20,
+			"reload_s": 2.3,
+			"range_m": 200.0
+		},
+		{
+			"id": "knife",
+			"name": "Knife",
+			"slot": 3,
+			"draw_s": 1.0,
+			"fire_interval_s": 0.4,
+			"automatic": true,
+			"magazine": 0,
+			"reload_s": 0.0,
+			"range_m": 1.5
+		}
+	]
+}

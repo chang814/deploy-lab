@@ -4,6 +4,8 @@
 [ext_resource type="Script" path="res://src/game/crosshair.gd" id="2_cross"]
 [ext_resource type="Shader" path="res://scenes/materials/grid.gdshader" id="3_grid"]
 [ext_resource type="Script" path="res://src/game/player_move.gd" id="4_move"]
+[ext_resource type="Script" path="res://src/game/weapon_controller.gd" id="5_weapons"]
+[ext_resource type="Script" path="res://src/game/target.gd" id="6_target"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
 
@@ -29,6 +31,12 @@ shader_parameter/major_color = Color(0.4, 0.38, 0.36, 1)
 [sub_resource type="CapsuleShape3D" id="body_shape"]
 radius = 0.4064
 height = 1.8288
+
+[sub_resource type="BoxShape3D" id="target_shape"]
+size = Vector3(0.5, 1.6, 0.3)
+
+[sub_resource type="BoxMesh" id="target_mesh"]
+size = Vector3(0.5, 1.6, 0.3)
 
 [sub_resource type="StandardMaterial3D" id="mat_box"]
 albedo_color = Color(0.75, 0.55, 0.3, 1)
@@ -104,6 +112,72 @@ script = ExtResource("1_look")
 
 [node name="Camera3D" type="Camera3D" parent="Player/Look"]
 current = true
+near = 0.02
+
+[node name="Weapons" type="Node3D" parent="Player/Look/Camera3D"]
+script = ExtResource("5_weapons")
+
+[node name="Range" type="Node3D" parent="."]
+
+[node name="Static10m" type="StaticBody3D" parent="Range"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, 0.8, -2)
+script = ExtResource("6_target")
+move_amplitude_m = 0
+move_speed_mps = 0
+
+[node name="Shape" type="CollisionShape3D" parent="Range/Static10m"]
+shape = SubResource("target_shape")
+
+[node name="Mesh" type="MeshInstance3D" parent="Range/Static10m"]
+mesh = SubResource("target_mesh")
+
+[node name="Static20m" type="StaticBody3D" parent="Range"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0.8, -12)
+script = ExtResource("6_target")
+move_amplitude_m = 0
+move_speed_mps = 0
+
+[node name="Shape" type="CollisionShape3D" parent="Range/Static20m"]
+shape = SubResource("target_shape")
+
+[node name="Mesh" type="MeshInstance3D" parent="Range/Static20m"]
+mesh = SubResource("target_mesh")
+
+[node name="Static26m" type="StaticBody3D" parent="Range"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, -18)
+script = ExtResource("6_target")
+move_amplitude_m = 0
+move_speed_mps = 0
+
+[node name="Shape" type="CollisionShape3D" parent="Range/Static26m"]
+shape = SubResource("target_shape")
+
+[node name="Mesh" type="MeshInstance3D" parent="Range/Static26m"]
+mesh = SubResource("target_mesh")
+
+[node name="Moving13m" type="StaticBody3D" parent="Range"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, -5)
+script = ExtResource("6_target")
+move_amplitude_m = 3.0
+move_speed_mps = 2.5
+
+[node name="Shape" type="CollisionShape3D" parent="Range/Moving13m"]
+shape = SubResource("target_shape")
+
+[node name="Mesh" type="MeshInstance3D" parent="Range/Moving13m"]
+mesh = SubResource("target_mesh")
+
+[node name="Moving22m" type="StaticBody3D" parent="Range"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, -14)
+script = ExtResource("6_target")
+move_amplitude_m = 4.0
+move_speed_mps = 4.0
+
+[node name="Shape" type="CollisionShape3D" parent="Range/Moving22m"]
+shape = SubResource("target_shape")
+
+[node name="Mesh" type="MeshInstance3D" parent="Range/Moving22m"]
+mesh = SubResource("target_mesh")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 
