@@ -9,7 +9,8 @@
 步骤：
 1. 对齐：OBS 日志里的开录时刻（毫秒）给出录像第 0 帧的大致 unix 时间；在 ±ALIGN_SEARCH_S 内逐个试偏移。
    每个偏移下，按输入显示层自己的点亮规则由记录推算各格子的亮灭时间段（predicted_spans），与录像里的亮起逐段对应
-   （_classify，开始与结束都要对上）；取矛盾最少的偏移，它必须唯一（连成一段）。对齐后仍有任何矛盾，或某个键的
+   （_classify，开始与结束都要对上）；取矛盾最少的偏移。矛盾最少的候选必须连成一个区间（这不等于偏移被唯一确定，
+   区间宽度记为对齐的不确定性，依赖偏移的判断按最不利的一端算）。对齐后仍有任何矛盾，或某个键的
    down / up 没有交替，整段录像作废
 2. 逐次切枪：遍历记录里的切枪键按下，从人工声明的初始武器（--initial）开始推算武器。触发键必须有**自己的**
    格子亮起（不是被合并进上一次亮起的），起点 s = 那一次亮起的帧
@@ -17,7 +18,10 @@
    AV_MIN_LAG–AV_MAX_LAG 帧内开始的火光（火光指标 ≥ FLASH_MIN）。窗口内必须**恰好一段**火光开始，
    且连续至少 MIN_FLASH_FRAMES 帧；有两段（例如旁边的橙色特效）就无法确定是哪一段，作废。
    已知局限：橙色特效与真实火光无缝重叠时没有第二个上升沿，工具分不出来，靠人工逐帧抽查兜底
-4. 时长 = (f − s) / fps × timescale
+4. 第二个证据：弹药数字在开枪那一帧减一并短暂变白（features.py 的 ammo 列）。s 之后第一次「变白」的帧 g
+   必须落在 [f − AMMO_MAX_EARLY, f] 内，否则作废。开枪时刻取 g：第一批人工抽查中，火光很暗、没达到阈值的
+   两次开枪，弹药数字比检测到的火光早 1 帧，其余 23 次两者在同一帧
+5. 时长 = (g − s) / fps × timescale
 
 逐次检查（任何一条不满足就作废，并写明原因）：
 - 切枪前后的武器与该项要求一致
@@ -53,10 +57,14 @@ ITEMS: dict[str, tuple[str, str, str]] = {
 }
 
 MIN_LEAD_S = 0.2            # 这次按住左键至少要比火光早这么多（录像时间，即真实时间）
-FLASH_MIN = 100             # 火光帧的最低指标（实测开枪 650–2200，非开枪帧为 0 或个位数）
+FLASH_MIN = 400             # 火光帧的最低指标。第一批 25 个有效样本开枪那一帧最低 642；第二批（21:25 起）录像背景里
+                            # 有橙色，非开枪帧本身就有 150–180，旧阈值 100 会把背景当成「一直亮着」
 MIN_FLASH_FRAMES = 3        # 火光至少连续这么多帧（慢动作下真实火光持续多帧）
 AUDIO_SHOT_MIN = 2500       # 枪声的音量下限（实测：枪声 3800–14500，拔枪等声音不超过约 1000）
 AV_MIN_LAG, AV_MAX_LAG = 2, 7   # 枪声开始相对火光开始的延迟窗口（帧）；第一批 33 次实测 3–6（另有 1 次 2）
+AMMO_MIN = 300             # 弹药数字「变白」的像素数下限。开枪那一帧实测 440–680；非开枪的白色干扰见过 216（切回时 HUD 变化）、
+                           # 267（录像末尾），以及 584（停止录制时弹出的 OBS 窗口，由「左键松开」边界排除）
+AMMO_MAX_EARLY = 1         # 弹药数字最多比检测到的火光早这么多帧（第一批 25 次实测：23 次 0 帧、2 次 1 帧；不另加裕量）
 ALIGN_SEARCH_S = 0.15       # 对齐时，在 OBS 开录时刻附近搜索的范围
 ALIGN_STEP_S = 0.002
 MATCH_EARLY_S = 0.03        # 对齐后，录像里的亮起 / 熄灭最多比推算的早这么多（第一批实测见报告）
@@ -74,6 +82,7 @@ class Frame:
     lit: dict[str, bool]
     flash: int
     audio: float = 0.0
+    ammo: int = -1          # 弹药数字区域接近白色的像素数；-1 = 特征文件里没有这一列
 
 
 @dataclass
@@ -91,6 +100,7 @@ class Cycle:
     start_frame: int | None
     press_t: float
     flash_frame: int | None = None
+    shot_frame: int | None = None     # 开枪帧（弹药数字变白），时长的终点
     duration_s: float | None = None
     valid: bool = False
     reason: str = ""
@@ -101,8 +111,11 @@ class Timeline:
     """一段录像对齐后的按键时间线。"""
     offset: float               # 录像第 0 帧 = OBS 开录时刻 + offset
     pairs: int
-    presses: list[Press] = field(default_factory=list)   # 录像时间范围内、按时间排序
+    presses: list[Press] = field(default_factory=list)   # 录像结束之前的全部事件（含录像开始前），按时间排序
     problems: list[str] = field(default_factory=list)    # 非空 = 整段录像作废
+    # 矛盾最少的候选偏移区间 [lo, hi]：区间内任何偏移都同样与录像一致，宽度表示对齐的不确定性
+    offset_lo: float = 0.0
+    offset_hi: float = 0.0
 
 
 def read_features(path: str) -> tuple[list[Frame], float]:
@@ -111,7 +124,8 @@ def read_features(path: str) -> tuple[list[Frame], float]:
         for r in csv.DictReader(f):
             fps = float(r["fps"])
             lit = {k[4:]: r[k] == "1" for k in r if k.startswith("lit_")}
-            frames.append(Frame(float(r["t"]), lit, int(r["flash"]), float(r.get("audio") or 0)))
+            ammo = int(r["ammo"]) if r.get("ammo") not in (None, "") else -1
+            frames.append(Frame(float(r["t"]), lit, int(r["flash"]), float(r.get("audio") or 0), ammo))
     return frames, fps
 
 
@@ -301,8 +315,11 @@ def _event_problems(log: list[tuple[float, str, str]], obs_start: float, offset:
 
 
 def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, str]], obs_start: float) -> Timeline:
-    """录像第 0 帧 = obs_start + offset。在 ±ALIGN_SEARCH_S 内逐个试 offset，取物理模型矛盾最少的；
-    矛盾最少的 offset 必须连成一段（否则有两种对齐同样可信，拒绝），最后在这一段的中点上分类。"""
+    """录像第 0 帧 = obs_start + offset。在 ±ALIGN_SEARCH_S 内逐个试 offset，取物理模型矛盾最少的。
+
+    矛盾最少的候选必须连成一个区间（否则有两种相距较远的对齐同样可信，拒绝）。这只说明最优候选是连续的，
+    不说明偏移被唯一确定：区间宽度就是对齐的不确定性，记在 offset_lo / offset_hi 里。取区间中点，
+    再按「亮起 − 按下」的中位数细调（细调后矛盾不能变多）。"""
     end_t = len(frames) / fps
     steps = int(round(ALIGN_SEARCH_S / ALIGN_STEP_S))
     scored = []
@@ -325,7 +342,7 @@ def build_timeline(frames: list[Frame], fps: float, log: list[tuple[float, str, 
         ps2 = [Press(t - obs_start - fine, k, e) for t, k, e in log if t - obs_start - fine <= end_t]
         if _classify(frames, fps, ps2)[:2] == (-best[1], best[0]):
             offset = fine
-    tl = Timeline(offset, 0)
+    tl = Timeline(offset, 0, offset_lo=js[0] * ALIGN_STEP_S, offset_hi=js[-1] * ALIGN_STEP_S)
     # 录像开始之前的事件也保留：第 0 帧时各键（包括左键）是否按着，由完整记录决定
     tl.presses = [Press(t - obs_start - offset, k, e) for t, k, e in log if t - obs_start - offset <= end_t]
     owned, bad, notes = _classify(frames, fps, tl.presses)
@@ -388,6 +405,64 @@ def find_flash(frames: list[Frame], start: int, end: int) -> tuple[int | None, s
     return f, ""
 
 
+def confirmed_flashes(frames: list[Frame], start: int, end: int) -> list[int]:
+    """(start, end) 之间「确认的」火光开始帧：连续至少 MIN_FLASH_FRAMES 帧，且之后 AV_MIN_LAG–AV_MAX_LAG 帧内开始出现枪声。
+    用来界定「下一发」，单帧橙色或无声的橙色不算。"""
+    shots = audio_onsets(frames, start, min(len(frames), end + AV_MAX_LAG))
+    cand: dict[int, list[int]] = {}
+    for f in flash_onsets(frames, start, end):
+        run = f
+        while run < len(frames) and frames[run].flash >= FLASH_MIN:
+            run += 1
+        paired = [a for a in shots if f + AV_MIN_LAG <= a <= f + AV_MAX_LAG]
+        if run - f >= MIN_FLASH_FRAMES and paired:
+            cand[f] = paired
+    # 一声枪响只能确认一段火光：被两段以上共用的枪响有歧义，这些火光都不算确认
+    shared = {a for f, ps in cand.items() for a in ps if sum(a in q for q in cand.values()) > 1}
+    return [f for f, ps in cand.items() if not shared.intersection(ps)]
+
+
+def left_release_frame(tl: Timeline, t: float, fps: float) -> int | None:
+    """时刻 t 左键所在的那次按住，在录像里**最晚**可能何时松开（帧）。按记录的松开时刻，加上显示延迟上限
+    MATCH_LATE_S 和对齐区间里最不利的一端，宁可范围大一点也不漏掉冲突。t 时左键没按着、或记录里没有松开，返回 None。"""
+    since = left_held_since(tl.presses, t)
+    if since is None:
+        return None
+    up = next((p.t for p in tl.presses if p.key == "L" and p.event == "up" and p.t > t), None)
+    if up is None:
+        return None
+    return int(math.ceil((up + MATCH_LATE_S + (tl.offset - tl.offset_lo)) * fps)) + 1
+
+
+def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int,
+                     release: int | None = None) -> tuple[int | None, str]:
+    """(start, end) 之间弹药数字第一次变白的帧，必须落在 [flash − AMMO_MAX_EARLY, flash] 内。
+
+    弹药数字只会因开枪而变，每一发都有自己的火光。所以从切枪到「下一段火光开始前 AMMO_MAX_EARLY 帧」（没有下一段
+    火光就到窗口结束）之间必须**恰好一次**变白：多一次说明画面里有别的白色干扰，无法确定哪一次是开枪，作废；
+    连射的后续几发各有自己的火光，落在范围之外。已知局限：白色干扰与真实的数字变化无缝相连时只有一个上升沿，
+    分不出来，靠人工逐帧抽查兜底。
+    release：开火时那次左键按住在录像里最晚何时松开（帧）。开枪只发生在左键按住期间，所以检查范围最多到这里；
+    松开之后的画面变化（例如停止录制时弹出的 OBS 窗口）不可能是开枪。"""
+    if frames[start].ammo < 0:
+        return None, "特征文件里没有弹药数字（ammo 列），请用新版 features.py 重新提取"
+    on = [g for g in range(max(start + 1, 1), end)
+          if frames[g].ammo >= AMMO_MIN and frames[g - 1].ammo < AMMO_MIN]
+    if not on:
+        return None, "火光前后没有看到弹药数字变化，无法确认开枪"
+    later = confirmed_flashes(frames, flash, end)
+    limit = later[0] - AMMO_MAX_EARLY if later else end
+    if release is not None:
+        limit = min(limit, release)
+    near = [x for x in on if x < limit]
+    if len(near) > 1:
+        return None, f"切枪到下一发之前弹药数字变白了 {len(near)} 次（第 {near[0]}、{near[1]} 帧），无法确定哪一次是开枪"
+    g = on[0]
+    if not flash - AMMO_MAX_EARLY <= g <= flash:
+        return None, f"弹药数字变化（第 {g} 帧）与火光（第 {flash} 帧）对不上"
+    return g, ""
+
+
 # ---------- 分析 ----------
 
 def analyze(frames: list[Frame], fps: float, item: str, timescale: float,
@@ -424,25 +499,32 @@ def analyze(frames: list[Frame], fps: float, item: str, timescale: float,
             c.reason = why
             continue
         c.flash_frame = f
-        hold = left_held_since(tl.presses, frames[f].t)
+        g, why = find_ammo_change(frames, s, end, f, left_release_frame(tl, frames[f].t, fps))
+        if g is None:
+            c.reason = why
+            continue
+        c.shot_frame = g
+        hold = left_held_since(tl.presses, frames[g].t)
         if hold is None:
             c.reason = "开火时左键没有按着"
             continue
         if hold <= p.t:
             c.reason = "开火时的这次按住在切枪之前就开始了"
             continue
-        if not left_shown_held(frames, fps, hold, frames[f].t):
+        if not left_shown_held(frames, fps, hold, frames[g].t):
             c.reason = "按键记录说开火时左键按着，但录像里左键格子没有一直亮着（记录可能缺了松开）"
             continue
-        if frames[f].t - hold < MIN_LEAD_S:
-            c.reason = f"这次按住左键只比火光早 {(frames[f].t - hold) * 1000:.0f} ms，可能按晚了"
+        # 按住时刻来自记录、火光来自录像，两者的差依赖对齐偏移：按候选区间里最不利的一端算
+        lead = frames[g].t - hold - (tl.offset - tl.offset_lo)
+        if lead < MIN_LEAD_S:
+            c.reason = f"这次按住左键（按对齐最不利的一端）只比开枪早 {lead * 1000:.0f} ms，可能按晚了"
             continue
         prev_t = switches[idx - 1].t if idx > 0 else 0.0
-        lost = [q for q in tl.presses if q.status == "missing" and prev_t <= q.t <= frames[f].t]
+        lost = [q for q in tl.presses if q.status == "missing" and prev_t <= q.t <= frames[g].t]
         if lost:
             c.reason = f"按键记录里 {lost[0].t:.2f}s 的 {lost[0].key} 在录像里没有显示，输入显示层可能卡顿"
             continue
-        c.duration_s = (f - s) / fps * timescale
+        c.duration_s = (g - s) / fps * timescale
         c.valid = True
     return cycles
 
@@ -481,6 +563,35 @@ def parse_start(text: str) -> float:
     return dt.timestamp()
 
 
+SAMPLES_HEADER = ["item", "video", "start_frame", "flash_frame", "shot_frame", "duration_s", "valid", "reason"]
+
+
+def append_samples(path: str, rows: list[list]) -> None:
+    """把逐样本结果追加到 CSV。文件已存在时表头必须与 SAMPLES_HEADER 完全一致，否则拒绝（不同版本的列不能混写）。"""
+    header = None
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            header = next(csv.reader(f), None)
+    except FileNotFoundError:
+        pass
+    if header is not None and header != SAMPLES_HEADER:
+        raise ValueError(f"{path} 的表头与当前版本不一致（{','.join(header)}），请换一个新文件")
+    needs_newline = False
+    if header is not None:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            if f.tell() > 0:
+                f.seek(-1, 2)
+                needs_newline = f.read(1) not in (b"\n", b"\r")
+    with open(path, "a", newline="", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\r\n")   # csv 模块默认的行结束符
+        w = csv.writer(f)
+        if header is None:
+            w.writerow(SAMPLES_HEADER)
+        w.writerows(rows)
+
+
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -507,7 +618,9 @@ def main() -> None:
         tl.problems = timeline_problems(frames, fps) + tl.problems
         merged = sum(1 for p in tl.presses if p.status == "merged" and p.t >= 0.0)
         missing = sum(1 for p in tl.presses if p.status == "missing" and p.t >= 0.0)
-        print(f"{name}：录像起点 = OBS 开录时刻 {tl.offset * 1000:+.0f} ms（{tl.pairs} 个配对）；"
+        print(f"{name}：录像起点 = OBS 开录时刻 {tl.offset * 1000:+.0f} ms"
+              f"（候选区间 {tl.offset_lo * 1000:+.0f} ~ {tl.offset_hi * 1000:+.0f} ms，"
+              f"宽 {(tl.offset_hi - tl.offset_lo) * 1000:.0f} ms；{tl.pairs} 段对上）；"
               f"合并显示的按下 {merged} 次，漏显示 {missing} 次")
         for prob in tl.problems:
             print(f"  整段作废：{prob}")
@@ -515,23 +628,19 @@ def main() -> None:
             tag = "有效" if c.valid else "作废"
             dur = f"{c.duration_s * 1000:7.1f} ms" if c.valid else " " * 10
             flash = f"{frames[c.flash_frame].t:8.3f}s" if c.flash_frame is not None else "       —"
-            print(f"{name:10s} 按键 {c.press_t:8.3f}s  火光 {flash}  {dur}  {tag} {c.reason}")
+            early = (f"（弹药数字早 {c.flash_frame - c.shot_frame} 帧）"
+                     if c.shot_frame is not None and c.shot_frame != c.flash_frame else "")
+            print(f"{name:10s} 按键 {c.press_t:8.3f}s  火光 {flash}  {dur}  {tag} {c.reason}{early}")
             rows.append([a.item, name, c.start_frame if c.start_frame is not None else "",
                          c.flash_frame if c.flash_frame is not None else "",
+                         c.shot_frame if c.shot_frame is not None else "",
                          f"{c.duration_s:.4f}" if c.valid else "", int(c.valid), c.reason])
             all_cycles.append(c)
     if a.samples_out:
-        exists = False
         try:
-            with open(a.samples_out, encoding="utf-8") as f:
-                exists = bool(f.readline())
-        except FileNotFoundError:
-            pass
-        with open(a.samples_out, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if not exists:
-                w.writerow(["item", "video", "start_frame", "flash_frame", "duration_s", "valid", "reason"])
-            w.writerows(rows)
+            append_samples(a.samples_out, rows)
+        except ValueError as e:
+            sys.exit(str(e))
     s = summarize(all_cycles)
     if s["samples"]:
         print(f"{a.item}：有效 {s['samples']} 次，中位数 {s['median_s'] * 1000:.1f} ms，"

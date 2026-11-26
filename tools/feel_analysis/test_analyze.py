@@ -18,17 +18,21 @@ DISPLAY_LAG = 0.005     # 合成的「按下 → 格子亮起」延迟
 
 
 def make(n: int, presses: dict[str, list[tuple[int, int]]], flashes: list[tuple[int, int]] = (),
-         flash_value: int = 1800, sound: bool = True, extra_audio: list[tuple[int, int]] = ()) -> list[an.Frame]:
+         flash_value: int = 1800, sound: bool = True, extra_audio: list[tuple[int, int]] = (),
+         ammo_shift: int | None = 0, extra_ammo: list[int] = ()) -> list[an.Frame]:
     """presses：键 → [(亮起帧, 熄灭帧)]；flashes：[(开始帧, 结束帧)] 期间火光指标为 flash_value，
-    sound 为真时每段火光开始后 AV_LAG 帧起有枪声；extra_audio：额外的枪声区间。"""
+    sound 为真时每段火光开始后 AV_LAG 帧起有枪声；extra_audio：额外的枪声区间。
+    ammo_shift：弹药数字在每段火光开始帧 + ammo_shift 变白 2 帧（None = 特征文件没有 ammo 列）；extra_ammo：额外变白的帧。"""
     shots = [(a + AV_LAG, b + AV_LAG) for a, b in flashes] if sound else []
     shots += list(extra_audio)
+    ammo_on = ([a + ammo_shift for a, _ in flashes] if ammo_shift is not None else []) + list(extra_ammo)
     frames = []
     for i in range(n):
         lit = {k: any(a <= i < b for a, b in presses.get(k, [])) for k in KEYS}
         flash = flash_value if any(a <= i < b for a, b in flashes) else 0
         audio = 9000.0 if any(a <= i < b for a, b in shots) else 100.0
-        frames.append(an.Frame(i / FPS, lit, flash, audio))
+        ammo = -1 if ammo_shift is None else (500 if any(a <= i < a + 2 for a in ammo_on) else 3)
+        frames.append(an.Frame(i / FPS, lit, flash, audio, ammo))
     return frames
 
 
@@ -391,6 +395,39 @@ class AnalyzeTest(Base):
         cs = self.run_cycle(presses=overlay, log_extra=[(190 / FPS, "R", "down"), (191 / FPS, "R", "up")])
         self.invalid(cs[0], "整段录像作废")
 
+    def test_left_lead_uses_worst_case_offset(self):
+        # 左键在火光前 13 帧（217 ms）按住：按估计偏移够 0.2 s；对齐区间最不利的一端扣掉后不够 → 作废
+        p = dict(self.BASE, L=[(287, 320)])
+        fr = make(400, p, flashes=[(300, 340)])
+        tl = timeline(fr, p)
+        self.assertGreater(tl.offset - tl.offset_lo, 0.017)   # 合成数据下候选区间有一定宽度
+        self.invalid(an.analyze(fr, FPS, "A", 0.1, (None, None), tl)[0], "最不利")
+
+    def test_offset_range_is_reported(self):
+        p = dict(self.BASE)
+        tl = timeline(make(400, p, flashes=[(300, 340)]), p)
+        self.assertLessEqual(tl.offset_lo, tl.offset)
+        self.assertLessEqual(tl.offset, tl.offset_hi + 1e-9)
+
+    def test_presses_before_video_do_not_change_weapon_tracking(self):
+        # 录像开始前按过 2（若参与推算，手里会变成 Glock）；武器推算只以 --initial 声明为准，
+        # 录像前的切枪按键不参与，否则 A（刀 → AK）会被推成别的方向
+        # （去掉 BASE 里录像内的那次 3，否则它会把手里重置成刀、掩盖问题）
+        base = {k: v for k, v in self.BASE.items() if k != "3"}
+        base["R"] = [(60, 66)]   # 补一段与切枪无关的按键，保证对齐有足够的配对
+        log = log_from(base, [(-2.0, "2", "down"), (-1.95, "2", "up")])
+        fr = make(400, base, flashes=[(300, 340)])
+        tl = an.build_timeline(fr, FPS, log, OBS)
+        self.assertEqual(tl.problems, [])
+        self.assertTrue(any(x.t < 0 and x.key == "2" for x in tl.presses))   # 录像前的事件仍在时间线里
+        cs = an.analyze(fr, FPS, "A", 0.1, ("knife", "ak"), tl)
+        self.assertEqual(len(cs), 1)
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        # 录像前的滚轮也不参与（否则手里会变成「不知道」）
+        log = log_from(base, [(-0.5, "wheel", "wheel")])
+        tl = an.build_timeline(fr, FPS, log, OBS)
+        self.assertTrue(an.analyze(fr, FPS, "A", 0.1, ("knife", "ak"), tl)[0].valid)
+
     def test_codex_r6_left_held_since_before_video(self):
         # 第 6 轮反例：左键在录像前 0.5 s 按下、第 120 帧松开（切枪在第 100 帧，那时左键按着）→ 作废
         overlay = {"L": [(0, 120), (150, 320)]}
@@ -470,6 +507,128 @@ class AnalyzeTest(Base):
         tl = timeline(fr, p)
         self.assertTrue(an.analyze(fr, FPS, "E2", 0.1, ("ak", "glock"), tl)[0].valid)
         self.assertFalse(an.analyze(fr, FPS, "E2", 0.1, (None, None), tl)[0].valid)
+
+    def test_shot_frame_is_ammo_change(self):
+        # 弹药数字比火光早 1 帧（火光很暗那一帧没达到阈值）：开枪帧取弹药数字那一帧
+        cs = self.run_cycle(ammo_shift=-1)
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual((cs[0].flash_frame, cs[0].shot_frame), (300, 299))
+        self.assertAlmostEqual(cs[0].duration_s, 199 / FPS * 0.1)
+
+    def test_ammo_and_flash_must_agree(self):
+        self.invalid(self.run_cycle(ammo_shift=1)[0], "对不上")      # 弹药数字晚于火光
+        self.invalid(self.run_cycle(ammo_shift=-2)[0], "对不上")     # 早于实测范围（0–1 帧）
+        self.invalid(self.run_cycle(ammo_shift=-1, extra_ammo=[200])[0], "2 次")   # 更早有一次变白
+
+    def test_codex_pr34_white_interference_before_shot(self):
+        # PR #34 第 1 轮反例：真实变化在 300，第 298 帧另有白色干扰（合成数据里每次变白持续 2 帧，
+        # 所以 298–301 连成一段、只有一个上升沿 298）→ 比火光早 2 帧，超出实测 0–1 帧 → 作废
+        self.invalid(self.run_cycle(extra_ammo=[298])[0], "对不上")
+        # 干扰与真实变化之间有间隔（297–298 变白，299 恢复，300 再变白）→ 两次变白，无法确定 → 作废
+        self.invalid(self.run_cycle(extra_ammo=[297])[0], "无法确定")
+
+    def test_codex_pr34_r3_interference_far_before_late_change(self):
+        # PR #34 第 3 轮反例：299–300 白色干扰、301–305 暗、306 真实变化（不在任何固定窗口内）。
+        # 之后没有第二段火光 → 检查范围到窗口结束 → 两次变白 → 作废
+        self.invalid(self.run_cycle(ammo_shift=6, extra_ammo=[299])[0], "无法确定")
+
+    def test_codex_pr34_r4_unconfirmed_orange_cannot_cut_window(self):
+        # PR #34 第 4 轮反例：真实火光 [300,306)，299 白色干扰，306 真实变化，307 一帧无声橙色。
+        # 单帧、无枪声的橙色不算「下一发」，不能截断检查范围 → 两次变白 → 作废
+        p = dict(self.BASE)
+        fr = make(400, p, flashes=[(300, 306)], ammo_shift=6, extra_ammo=[299])
+        fr[307] = an.Frame(fr[307].t, fr[307].lit, 1800, fr[307].audio, fr[307].ammo)
+        cs = an.analyze(fr, FPS, "A", 0.1, (None, None), timeline(fr, p))
+        self.invalid(cs[0], "无法确定")
+
+    def test_second_shot_ammo_one_frame_before_its_flash(self):
+        # 连射第二发：弹药数字（359）比它的火光（360）早 1 帧 → 属于第二发，不算冲突
+        cs = self.run_cycle(flashes=((300, 310), (360, 370)), extra_ammo=[359])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
+
+    def test_codex_pr34_r5_shared_gunshot_cannot_confirm_two_flashes(self):
+        # PR #34 第 5 轮反例：火光 [300,306)、橙色干扰 [307,310)、下一发 [311,320)；枪声 [304,307)、[314,320)；
+        # 弹药变白 299（干扰）、306（真实）、311。307 和 311 共用 314 的枪声 → 都不算确认 → 范围不被截断 → 作废
+        p = dict(self.BASE)
+        fr = make(400, p, flashes=[(300, 306), (307, 310), (311, 320)], sound=False,
+                  extra_audio=[(304, 307), (314, 320)], ammo_shift=None)
+        ammo = {299, 300, 306, 307, 311, 312}
+        fr = [an.Frame(x.t, x.lit, x.flash, x.audio, 500 if i in ammo else 3) for i, x in enumerate(fr)]
+        cs = an.analyze(fr, FPS, "A", 0.1, (None, None), timeline(fr, p))
+        self.assertFalse(cs[0].valid, cs[0].reason)
+
+    def test_white_after_left_release_is_ignored(self):
+        # 左键在 320 帧松开；之后 380 帧的白色（例如停止录制时弹出的 OBS 窗口）不可能是开枪 → 不算冲突
+        cs = self.run_cycle(extra_ammo=[380])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
+        # 左键还按着时出现的白色仍算冲突
+        cs = self.run_cycle(extra_ammo=[315])
+        self.assertFalse(cs[0].valid)
+
+    def test_spray_shots_with_own_flash_are_not_conflicts(self):
+        # 连射：第二发有自己的火光（360 开始）和弹药变化（360）→ 不算冲突，第一发仍有效
+        cs = self.run_cycle(flashes=((300, 310), (360, 370)))
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
+        # 第二发的弹药数字比它的火光早 1 帧（359）也不算冲突
+        cs = self.run_cycle(flashes=((300, 310),), extra_ammo=[359], extra_audio=[(364, 374)],
+                            presses={"L": [(150, 390)]})   # 左键一直按到 390，359 时仍可能开枪
+        self.assertFalse(cs[0].valid)   # 没有第二段火光时，359 的变白就是冲突
+
+    def test_codex_pr34_r2_interference_then_late_change(self):
+        # PR #34 第 2 轮反例：299 帧变白（干扰）、300 帧暗、301 帧真实变化（比火光晚 1 帧）→ 两次变白 → 作废
+        p = dict(self.BASE)
+        fr = make(400, p, flashes=[(300, 340)], ammo_shift=1)
+        fr[299] = an.Frame(fr[299].t, fr[299].lit, fr[299].flash, fr[299].audio, 500)
+        fr[300] = an.Frame(fr[300].t, fr[300].lit, fr[300].flash, fr[300].audio, 3)
+        cs = an.analyze(fr, FPS, "A", 0.1, (None, None), timeline(fr, p))
+        self.invalid(cs[0], "无法确定")
+
+    def test_seamless_white_interference_is_a_known_limit(self):
+        # 已知局限：干扰在火光前 1 帧且与真实变化无缝相连 → 只有一个上升沿 299，工具会取 299（早 1 帧）。
+        # 这与人工抽查里「火光很暗、数字早 1 帧」的真实情形分不开，由人工逐帧抽查兜底
+        cs = self.run_cycle(extra_ammo=[299])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 299)
+
+    def test_white_after_flash_without_own_flash_is_conflict(self):
+        # 火光之后再变白、但这次变白没有自己的火光（不是连射的下一发）→ 是干扰 → 作废
+        # （连射的下一发有自己的火光，见 test_spray_shots_with_own_flash_are_not_conflicts）
+        self.invalid(self.run_cycle(extra_ammo=[310])[0], "无法确定")
+
+    def test_no_ammo_change_is_invalid(self):
+        self.invalid(self.run_cycle(ammo_shift=500)[0], "没有看到弹药数字变化")
+
+    def test_old_features_without_ammo_column(self):
+        self.invalid(self.run_cycle(ammo_shift=None)[0], "ammo 列")
+
+    def test_samples_csv_header_must_match(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "s.csv")
+        an.append_samples(path, [["A", "x", 1, 2, 2, "0.1", 1, ""]])
+        an.append_samples(path, [["A", "x", 3, 4, 4, "0.1", 1, ""]])
+        with open(path, encoding="utf-8") as f:
+            self.assertEqual(len(f.read().strip().splitlines()), 3)
+        old = os.path.join(d, "old.csv")
+        with open(old, "w", encoding="utf-8") as f:
+            f.write("item,video,start_frame,flash_frame,duration_s,valid,reason\n")
+        with self.assertRaises(ValueError):
+            an.append_samples(old, [["A", "x", 1, 2, 2, "0.1", 1, ""]])
+        # 合法文件末尾没有换行：追加时不能和上一行粘在一起
+        import csv as _csv
+        for content in (",".join(an.SAMPLES_HEADER), ",".join(an.SAMPLES_HEADER) + "\r\nA,x,1,2,2,0.1,1,"):
+            path2 = os.path.join(d, "nonl.csv")
+            with open(path2, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
+            an.append_samples(path2, [["B", "y", 5, 6, 6, "0.2", 1, ""]])
+            with open(path2, encoding="utf-8", newline="") as f:
+                rows = list(_csv.reader(f))
+            self.assertEqual(rows[0], an.SAMPLES_HEADER)
+            self.assertEqual(rows[-1], ["B", "y", "5", "6", "6", "0.2", "1", ""])
+            self.assertTrue(all(len(r) == len(an.SAMPLES_HEADER) for r in rows))
 
     def test_summary(self):
         cs = [an.Cycle("A", 0, 0.0, valid=True, duration_s=v) for v in (1.0, 1.02, 1.01)] + [an.Cycle("A", 0, 0.0)]
