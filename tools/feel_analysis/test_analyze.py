@@ -527,6 +527,15 @@ class AnalyzeTest(Base):
         # 干扰与真实变化之间有间隔（297–298 变白，299 恢复，300 再变白）→ 两次变白，无法确定 → 作废
         self.invalid(self.run_cycle(extra_ammo=[297])[0], "无法确定")
 
+    def test_codex_pr34_r2_interference_then_late_change(self):
+        # PR #34 第 2 轮反例：299 帧变白（干扰）、300 帧暗、301 帧真实变化（比火光晚 1 帧）→ 两次变白 → 作废
+        p = dict(self.BASE)
+        fr = make(400, p, flashes=[(300, 340)], ammo_shift=1)
+        fr[299] = an.Frame(fr[299].t, fr[299].lit, fr[299].flash, fr[299].audio, 500)
+        fr[300] = an.Frame(fr[300].t, fr[300].lit, fr[300].flash, fr[300].audio, 3)
+        cs = an.analyze(fr, FPS, "A", 0.1, (None, None), timeline(fr, p))
+        self.invalid(cs[0], "无法确定")
+
     def test_seamless_white_interference_is_a_known_limit(self):
         # 已知局限：干扰在火光前 1 帧且与真实变化无缝相连 → 只有一个上升沿 299，工具会取 299（早 1 帧）。
         # 这与人工抽查里「火光很暗、数字早 1 帧」的真实情形分不开，由人工逐帧抽查兜底
@@ -559,6 +568,18 @@ class AnalyzeTest(Base):
             f.write("item,video,start_frame,flash_frame,duration_s,valid,reason\n")
         with self.assertRaises(ValueError):
             an.append_samples(old, [["A", "x", 1, 2, 2, "0.1", 1, ""]])
+        # 合法文件末尾没有换行：追加时不能和上一行粘在一起
+        import csv as _csv
+        for content in (",".join(an.SAMPLES_HEADER), ",".join(an.SAMPLES_HEADER) + "\r\nA,x,1,2,2,0.1,1,"):
+            path2 = os.path.join(d, "nonl.csv")
+            with open(path2, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
+            an.append_samples(path2, [["B", "y", 5, 6, 6, "0.2", 1, ""]])
+            with open(path2, encoding="utf-8", newline="") as f:
+                rows = list(_csv.reader(f))
+            self.assertEqual(rows[0], an.SAMPLES_HEADER)
+            self.assertEqual(rows[-1], ["B", "y", "5", "6", "6", "0.2", "1", ""])
+            self.assertTrue(all(len(r) == len(an.SAMPLES_HEADER) for r in rows))
 
     def test_summary(self):
         cs = [an.Cycle("A", 0, 0.0, valid=True, duration_s=v) for v in (1.0, 1.02, 1.01)] + [an.Cycle("A", 0, 0.0)]
