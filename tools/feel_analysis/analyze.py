@@ -57,11 +57,13 @@ ITEMS: dict[str, tuple[str, str, str]] = {
 }
 
 MIN_LEAD_S = 0.2            # 这次按住左键至少要比火光早这么多（录像时间，即真实时间）
-FLASH_MIN = 100             # 火光帧的最低指标（实测开枪 650–2200，非开枪帧为 0 或个位数）
+FLASH_MIN = 400             # 火光帧的最低指标。第一批 25 个有效样本开枪那一帧最低 642；第二批（21:25 起）录像背景里
+                            # 有橙色，非开枪帧本身就有 150–180，旧阈值 100 会把背景当成「一直亮着」
 MIN_FLASH_FRAMES = 3        # 火光至少连续这么多帧（慢动作下真实火光持续多帧）
 AUDIO_SHOT_MIN = 2500       # 枪声的音量下限（实测：枪声 3800–14500，拔枪等声音不超过约 1000）
 AV_MIN_LAG, AV_MAX_LAG = 2, 7   # 枪声开始相对火光开始的延迟窗口（帧）；第一批 33 次实测 3–6（另有 1 次 2）
-AMMO_MIN = 200             # 弹药数字「变白」的像素数下限（第一批实测：开枪那一帧 440–680，其余 ≤ 42）
+AMMO_MIN = 300             # 弹药数字「变白」的像素数下限。开枪那一帧实测 440–680；非开枪的白色干扰见过 216（切回时 HUD 变化）、
+                           # 267（录像末尾），以及 584（停止录制时弹出的 OBS 窗口，由「左键松开」边界排除）
 AMMO_MAX_EARLY = 1         # 弹药数字最多比检测到的火光早这么多帧（第一批 25 次实测：23 次 0 帧、2 次 1 帧；不另加裕量）
 ALIGN_SEARCH_S = 0.15       # 对齐时，在 OBS 开录时刻附近搜索的范围
 ALIGN_STEP_S = 0.002
@@ -407,23 +409,41 @@ def confirmed_flashes(frames: list[Frame], start: int, end: int) -> list[int]:
     """(start, end) 之间「确认的」火光开始帧：连续至少 MIN_FLASH_FRAMES 帧，且之后 AV_MIN_LAG–AV_MAX_LAG 帧内开始出现枪声。
     用来界定「下一发」，单帧橙色或无声的橙色不算。"""
     shots = audio_onsets(frames, start, min(len(frames), end + AV_MAX_LAG))
-    out = []
+    cand: dict[int, list[int]] = {}
     for f in flash_onsets(frames, start, end):
         run = f
         while run < len(frames) and frames[run].flash >= FLASH_MIN:
             run += 1
-        if run - f >= MIN_FLASH_FRAMES and any(f + AV_MIN_LAG <= a <= f + AV_MAX_LAG for a in shots):
-            out.append(f)
-    return out
+        paired = [a for a in shots if f + AV_MIN_LAG <= a <= f + AV_MAX_LAG]
+        if run - f >= MIN_FLASH_FRAMES and paired:
+            cand[f] = paired
+    # 一声枪响只能确认一段火光：被两段以上共用的枪响有歧义，这些火光都不算确认
+    shared = {a for f, ps in cand.items() for a in ps if sum(a in q for q in cand.values()) > 1}
+    return [f for f, ps in cand.items() if not shared.intersection(ps)]
 
 
-def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int) -> tuple[int | None, str]:
+def left_release_frame(tl: Timeline, t: float, fps: float) -> int | None:
+    """时刻 t 左键所在的那次按住，在录像里**最晚**可能何时松开（帧）。按记录的松开时刻，加上显示延迟上限
+    MATCH_LATE_S 和对齐区间里最不利的一端，宁可范围大一点也不漏掉冲突。t 时左键没按着、或记录里没有松开，返回 None。"""
+    since = left_held_since(tl.presses, t)
+    if since is None:
+        return None
+    up = next((p.t for p in tl.presses if p.key == "L" and p.event == "up" and p.t > t), None)
+    if up is None:
+        return None
+    return int(math.ceil((up + MATCH_LATE_S + (tl.offset - tl.offset_lo)) * fps)) + 1
+
+
+def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int,
+                     release: int | None = None) -> tuple[int | None, str]:
     """(start, end) 之间弹药数字第一次变白的帧，必须落在 [flash − AMMO_MAX_EARLY, flash] 内。
 
     弹药数字只会因开枪而变，每一发都有自己的火光。所以从切枪到「下一段火光开始前 AMMO_MAX_EARLY 帧」（没有下一段
     火光就到窗口结束）之间必须**恰好一次**变白：多一次说明画面里有别的白色干扰，无法确定哪一次是开枪，作废；
     连射的后续几发各有自己的火光，落在范围之外。已知局限：白色干扰与真实的数字变化无缝相连时只有一个上升沿，
-    分不出来，靠人工逐帧抽查兜底。"""
+    分不出来，靠人工逐帧抽查兜底。
+    release：开火时那次左键按住在录像里最晚何时松开（帧）。开枪只发生在左键按住期间，所以检查范围最多到这里；
+    松开之后的画面变化（例如停止录制时弹出的 OBS 窗口）不可能是开枪。"""
     if frames[start].ammo < 0:
         return None, "特征文件里没有弹药数字（ammo 列），请用新版 features.py 重新提取"
     on = [g for g in range(max(start + 1, 1), end)
@@ -432,6 +452,8 @@ def find_ammo_change(frames: list[Frame], start: int, end: int, flash: int) -> t
         return None, "火光前后没有看到弹药数字变化，无法确认开枪"
     later = confirmed_flashes(frames, flash, end)
     limit = later[0] - AMMO_MAX_EARLY if later else end
+    if release is not None:
+        limit = min(limit, release)
     near = [x for x in on if x < limit]
     if len(near) > 1:
         return None, f"切枪到下一发之前弹药数字变白了 {len(near)} 次（第 {near[0]}、{near[1]} 帧），无法确定哪一次是开枪"
@@ -477,7 +499,7 @@ def analyze(frames: list[Frame], fps: float, item: str, timescale: float,
             c.reason = why
             continue
         c.flash_frame = f
-        g, why = find_ammo_change(frames, s, end, f)
+        g, why = find_ammo_change(frames, s, end, f, left_release_frame(tl, frames[f].t, fps))
         if g is None:
             c.reason = why
             continue

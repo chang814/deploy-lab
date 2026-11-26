@@ -547,13 +547,34 @@ class AnalyzeTest(Base):
         self.assertTrue(cs[0].valid, cs[0].reason)
         self.assertEqual(cs[0].shot_frame, 300)
 
+    def test_codex_pr34_r5_shared_gunshot_cannot_confirm_two_flashes(self):
+        # PR #34 第 5 轮反例：火光 [300,306)、橙色干扰 [307,310)、下一发 [311,320)；枪声 [304,307)、[314,320)；
+        # 弹药变白 299（干扰）、306（真实）、311。307 和 311 共用 314 的枪声 → 都不算确认 → 范围不被截断 → 作废
+        p = dict(self.BASE)
+        fr = make(400, p, flashes=[(300, 306), (307, 310), (311, 320)], sound=False,
+                  extra_audio=[(304, 307), (314, 320)], ammo_shift=None)
+        ammo = {299, 300, 306, 307, 311, 312}
+        fr = [an.Frame(x.t, x.lit, x.flash, x.audio, 500 if i in ammo else 3) for i, x in enumerate(fr)]
+        cs = an.analyze(fr, FPS, "A", 0.1, (None, None), timeline(fr, p))
+        self.assertFalse(cs[0].valid, cs[0].reason)
+
+    def test_white_after_left_release_is_ignored(self):
+        # 左键在 320 帧松开；之后 380 帧的白色（例如停止录制时弹出的 OBS 窗口）不可能是开枪 → 不算冲突
+        cs = self.run_cycle(extra_ammo=[380])
+        self.assertTrue(cs[0].valid, cs[0].reason)
+        self.assertEqual(cs[0].shot_frame, 300)
+        # 左键还按着时出现的白色仍算冲突
+        cs = self.run_cycle(extra_ammo=[315])
+        self.assertFalse(cs[0].valid)
+
     def test_spray_shots_with_own_flash_are_not_conflicts(self):
         # 连射：第二发有自己的火光（360 开始）和弹药变化（360）→ 不算冲突，第一发仍有效
         cs = self.run_cycle(flashes=((300, 310), (360, 370)))
         self.assertTrue(cs[0].valid, cs[0].reason)
         self.assertEqual(cs[0].shot_frame, 300)
         # 第二发的弹药数字比它的火光早 1 帧（359）也不算冲突
-        cs = self.run_cycle(flashes=((300, 310),), extra_ammo=[359], extra_audio=[(364, 374)])
+        cs = self.run_cycle(flashes=((300, 310),), extra_ammo=[359], extra_audio=[(364, 374)],
+                            presses={"L": [(150, 390)]})   # 左键一直按到 390，359 时仍可能开枪
         self.assertFalse(cs[0].valid)   # 没有第二段火光时，359 的变白就是冲突
 
     def test_codex_pr34_r2_interference_then_late_change(self):
