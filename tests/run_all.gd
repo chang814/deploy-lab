@@ -7,9 +7,14 @@ extends SceneTree
 ## - 一个测试文件都没发现
 ## - 测试文件加载失败、不符合接口，或 run() 返回的结果不合法（缺字段、类型不对、计数为负、一项测试都没跑）
 ## - 有断言失败
-## - 运行期间出现任何脚本错误或引擎错误（例如数组越界）：GDScript 遇到运行时错误不会抛异常，
+## - 运行期间出现脚本错误或引擎错误（例如数组越界）：GDScript 遇到运行时错误不会抛异常，
 ##   而是记录错误后从出错的函数返回，所以必须用 Logger 捕获，否则会被误判为通过
+## - 测试用 expect_error() 声明的预期错误没有一一对上（见下）
 ##
+## 预期错误的匹配规则：每条声明按内容（子串）恰好消耗一条**引擎**错误；
+## GDScript 运行时错误（Logger.ERROR_TYPE_SCRIPT）永远不能被声明消耗，也就不能被掩盖。
+##
+## 已知边界：只捕获错误日志（push_error、引擎错误、脚本错误）；printerr() 只是普通输出，不算错误。
 ## 测试里不要使用 assert()：在 headless 模式下断言失败会卡住进程（实测 4.7.2），
 ## 一律用 tests/test_case.gd 提供的 ok() / near()。整体超时由 CI 的 timeout 命令控制。
 
@@ -17,14 +22,38 @@ const DEFAULT_UNIT_DIR: String = "res://tests/unit"
 
 
 class ErrorCatcher extends Logger:
-	var errors: PackedStringArray = []
+	## 每条：{"script": bool, "text": String}
+	var errors: Array[Dictionary] = []
 
 	func _log_error(function: String, file: String, line: int, code: String, rationale: String,
-			_editor_notify: bool, _error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
-		errors.append("%s:%d %s() %s %s" % [file, line, function, code, rationale])
+			_editor_notify: bool, error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		errors.append({
+			"script": error_type == Logger.ERROR_TYPE_SCRIPT,
+			"text": "%s:%d %s() %s %s" % [file, line, function, code, rationale],
+		})
 
 	func _log_message(_message: String, _error: bool) -> void:
 		pass
+
+
+## 用预期错误逐条匹配实际错误。返回问题描述；全部对上返回空字符串。
+static func match_expected_errors(actual: Array[Dictionary], expected: PackedStringArray) -> String:
+	var remaining: Array[Dictionary] = actual.duplicate()
+	for pattern: String in expected:
+		if pattern.strip_edges().is_empty():
+			return "预期错误的内容不能为空（空字符串会匹配任何错误）"
+		var hit: int = -1
+		for i: int in remaining.size():
+			if not remaining[i]["script"] and str(remaining[i]["text"]).contains(pattern):
+				hit = i
+				break
+		if hit < 0:
+			return "声明的预期错误没有出现：%s" % pattern
+		remaining.remove_at(hit)
+	if not remaining.is_empty():
+		var kinds: String = "脚本运行时错误" if remaining.any(func(e: Dictionary) -> bool: return e["script"]) else "错误"
+		return "运行时出现 %d 条未预期的%s" % [remaining.size(), kinds]
+	return ""
 
 
 func _init() -> void:
@@ -56,13 +85,13 @@ func _init() -> void:
 				problem = _check_result(raw)
 				if problem.is_empty():
 					r = raw
-		var new_errors: PackedStringArray = catcher.errors.slice(errors_before)
-		var expected: int = int(r.get("expected_errors", 0)) if problem.is_empty() else 0
-		if problem.is_empty() and new_errors.size() != expected:
-			problem = "运行时出现 %d 个错误（测试声明预期 %d 个）" % [new_errors.size(), expected]
+		var new_errors: Array[Dictionary] = catcher.errors.slice(errors_before)
+		if problem.is_empty():
+			var expected: PackedStringArray = PackedStringArray(r.get("expected_errors", PackedStringArray()))
+			problem = match_expected_errors(new_errors, expected)
 		if not problem.is_empty():
-			for e: String in new_errors:
-				printerr("[%s] 错误：%s" % [path.get_file(), e])
+			for e: Dictionary in new_errors:
+				printerr("[%s] %s：%s" % [path.get_file(), "脚本错误" if e["script"] else "错误", e["text"]])
 		if not problem.is_empty():
 			broken.append("%s：%s" % [path, problem])
 			continue
@@ -91,15 +120,26 @@ func _check_result(raw: Variant) -> String:
 			return "run() 的结果缺少字段 %s" % key
 	if typeof(r["passed"]) != TYPE_INT or typeof(r["failed"]) != TYPE_INT:
 		return "passed / failed 必须是整数"
-	if typeof(r["messages"]) != TYPE_PACKED_STRING_ARRAY and typeof(r["messages"]) != TYPE_ARRAY:
-		return "messages 必须是数组"
+	if not _is_string_list(r["messages"]):
+		return "messages 必须是字符串数组"
 	if int(r["passed"]) < 0 or int(r["failed"]) < 0:
 		return "计数不能为负"
 	if int(r["passed"]) + int(r["failed"]) == 0:
 		return "这个文件一项测试都没有运行"
-	if r.has("expected_errors") and (typeof(r["expected_errors"]) != TYPE_INT or int(r["expected_errors"]) < 0):
-		return "expected_errors 必须是非负整数"
+	if r.has("expected_errors") and not _is_string_list(r["expected_errors"]):
+		return "expected_errors 必须是字符串数组"
 	return ""
+
+
+func _is_string_list(v: Variant) -> bool:
+	if typeof(v) == TYPE_PACKED_STRING_ARRAY:
+		return true
+	if typeof(v) != TYPE_ARRAY:
+		return false
+	for item: Variant in v:
+		if typeof(item) != TYPE_STRING:
+			return false
+	return true
 
 
 func _discover(unit_dir: String) -> PackedStringArray:

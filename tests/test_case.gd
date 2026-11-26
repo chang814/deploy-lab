@@ -5,7 +5,7 @@ extends RefCounted
 var _passed: int = 0
 var _failed: int = 0
 var _messages: PackedStringArray = []
-var _expected_errors: int = 0
+var _expected_errors: PackedStringArray = []
 
 
 ## 子类实现：在这里调用各个测试函数。
@@ -19,10 +19,12 @@ func run() -> Dictionary:
 	return {"passed": _passed, "failed": _failed, "messages": _messages, "expected_errors": _expected_errors}
 
 
-## 声明接下来的代码会故意触发 n 条引擎错误日志（例如喂给解析器非法输入）。
-## run_all.gd 要求实际捕获到的错误数与声明的总数**完全相等**，多了少了都算失败。
-func expect_errors(n: int) -> void:
-	_expected_errors += n
+## 声明接下来的代码会故意触发一条**引擎**错误日志，内容包含 substring（例如解析器对非法输入的报错）。
+## run_all.gd 的规则：
+## - 每条声明必须恰好匹配一条实际错误，多了少了都算失败
+## - 只能匹配引擎错误；GDScript 运行时错误（数组越界、空引用等）永远不能被声明掉
+func expect_error(substring: String) -> void:
+	_expected_errors.append(substring)
 
 
 func ok(label: String, cond: bool) -> void:

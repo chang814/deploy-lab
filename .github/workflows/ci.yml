@@ -58,10 +58,15 @@ jobs:
           ok=1
           for d in tests/runner_fixtures/*/; do
             name=$(basename "$d")
-            if timeout 120 ~/godot/godot --headless --path . -s res://tests/run_all.gd -- "--unit-dir=res://tests/runner_fixtures/$name" > /dev/null 2>&1; then
-              echo "::error::故障样例 $name 没有让测试入口失败"; ok=0
+            # 只接受测试入口约定的退出码 1；0 是漏判，124（超时）或其他值说明卡住或崩溃，同样不合格
+            set +e
+            timeout 120 ~/godot/godot --headless --path . -s res://tests/run_all.gd -- "--unit-dir=res://tests/runner_fixtures/$name" > "/tmp/fixture-$name.log" 2>&1
+            code=$?
+            set -e
+            if [ "$code" = 1 ]; then
+              echo "故障样例 $name：按预期失败（退出码 1）"
             else
-              echo "故障样例 $name：按预期失败"
+              echo "::error::故障样例 $name 的退出码是 $code，应为 1"; cat "/tmp/fixture-$name.log"; ok=0
             fi
           done
           [ "$ok" = 1 ]

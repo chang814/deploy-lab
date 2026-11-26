@@ -47,9 +47,9 @@ func _test_missing_or_wrong_type() -> void:
 
 func _test_default_and_non_finite() -> void:
 	ok("新建的对象默认无效", not LookConfig.new().is_valid())
-	# Godot 的 JSON 解析器遇到 1e99999 会记录一条「Exponent too high」引擎错误，每个字段一次
-	expect_errors(LookConfig.REQUIRED_KEYS.size())
 	for key: String in LookConfig.REQUIRED_KEYS:
+		# Godot 的 JSON 解析器遇到 1e99999 会记录一条「Exponent too high」引擎错误
+		expect_error("Exponent too high")
 		var d: Dictionary = {"m_yaw_deg": 0.022, "m_pitch_deg": 0.022, "pitch_min_deg": -89, "pitch_max_deg": 89, "base_hfov_4x3_deg": 90}
 		var text: String = JSON.stringify(d).replace('"%s":%s' % [key, JSON.stringify(d[key])], '"%s":1e99999' % key)
 		var c: LookConfig = LookConfig.from_json_text(text)
